@@ -11,6 +11,10 @@ object AddressUtils {
         return city.replace(Regex("\\s+\\d+$"), "").trim()
     }
 
+    /**
+     * Swedish-ish WGS84 pair: 55–70 lat, 10–25 lon.
+     * Accepts "58.319078, 15.102488" or "58.319078 15.102488".
+     */
     private val COORDS = Regex(
         """(?<![\\d.])([5-6]\\d\\.\\d{3,})\\s*[,;\\s]\\s*([1][0-9]\\.\\d{3,}|[2][0-5]\\.\\d{3,})(?![\\d.])"""
     )
@@ -27,6 +31,7 @@ object AddressUtils {
         return Coords(lat, lon)
     }
 
+    /** True if the whole address field is essentially only coordinates. */
     fun isCoordsOnlyAddress(address: String): Boolean {
         val t = address.trim()
         if (t.isEmpty()) return false
