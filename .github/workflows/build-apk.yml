@@ -18,22 +18,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          # Do not install the removed "tools" package (sdkmanager fails on it).
-          packages: |
-            platform-tools
-            platforms;android-35
-            build-tools;35.0.0
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.13"
+        # We removed the hardcoded gradle-version so it defaults to your project's wrapper
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
 
       - name: Build debug APK
-        run: gradle assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
