@@ -28,19 +28,15 @@ data class FixedStop(
 
 object FixedStops {
     val all: List<FixedStop> = listOf(
-        // Malmslätt
         FixedStop("anicura", "Malmslätt", "AniCura Jägarvallen", "Jägarvallsvägen 2", "58422", "Linköping"),
         FixedStop("karna_vardby", "Malmslätt", "Kärna Vårdby", "Kärnavägen 1", "58662", "Linköping"),
         FixedStop("vardbostader", "Malmslätt", "Vårdbostäder", "Kärna Centrum 1", "58665", "Linköping"),
-        FixedStop("apotek_humlan", "Malmslätt", "Apoteket Humlan", "Känabrunnsgatan 10".replace("Käna", "Kärna"), "58665", "Linköping"),
-        // Ljungsbro
+        FixedStop("apotek_humlan", "Malmslätt", "Apoteket Humlan", "Kärnabrunnsgatan 10", "58665", "Linköping"),
         FixedStop("ekhult", "Ljungsbro", "Ekhult", "Ljung Ekhult 1B", "58575", "Ljungsbro"),
         FixedStop("kronans", "Ljungsbro", "Kronans Apotek Ljungsbro", "Evastigen 9", "58571", "Ljungsbro"),
         FixedStop("vretaliden", "Ljungsbro", "Vretaliden", "Evastigen 19", "58571", "Ljungsbro"),
         FixedStop("harnebacken", "Ljungsbro", "Härnebacken", "Härnegatan 75", "58574", "Ljungsbro"),
-        // Vreta Kloster
         FixedStop("kanalgarden", "Vreta Kloster", "Kanalgården", "Trossvägen 3", "58577", "Vreta Kloster"),
-        // Skänninge
         FixedStop("anstalten", "Skänninge", "Anstalten Skänninge", "93XV+5HF Skänninge", "59621", "Skänninge"),
         FixedStop("anggarden", "Skänninge", "Änggården", "Villagatan 1", "59633", "Skänninge"),
         FixedStop("apotek_skanninge", "Skänninge", "Apoteket Skänninge", "Östra Kyrkogatan 5", "59634", "Skänninge"),
