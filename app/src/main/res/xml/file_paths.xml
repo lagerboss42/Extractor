@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
+    <!-- getExternalFilesDir() — Excel + traffic log live here -->
+    <external-files-path name="app_files" path="." />
+    <!-- optional public folder if we write there later -->
     <external-path name="extractor" path="Extractor/" />
 </paths>
