@@ -15,7 +15,7 @@ import java.util.regex.Pattern
  */
 object OpterHttpParser {
 
-    private val TERMINAL_STREETS = listOf("köpetorpsgatan", "kromgatan")
+    private val TERMINAL_STREETS = listOf("kopetorpsgatan", "kromgatan")
     private val TERMINAL_NAMES = listOf("alltransport")
 
     fun parse(payload: String): List<Shipment> {
@@ -26,15 +26,35 @@ object OpterHttpParser {
         return results
     }
 
+    /** True if payload contains a DEL record marker (for diagnostics). */
+    fun containsDelMarker(payload: String): Boolean =
+        payload.contains("DEL\t") || Regex("""(?m)^DEL[\t ]""").containsMatchIn(payload)
+
     private fun parseDelRecords(payload: String): List<Shipment> {
         val shipments = mutableListOf<Shipment>()
-        val delPattern = Pattern.compile("""DEL\t([^\r\n\x00]{50,2000})""", Pattern.MULTILINE)
-        val matcher = delPattern.matcher(payload)
+        val normalized = payload
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .replace("\u0000", "")
 
-        while (matcher.find()) {
-            val line = "DEL\t" + matcher.group(1)
+        val lines = mutableListOf<String>()
+        val embedded = Pattern.compile("""DEL\t([^\n]{30,})""")
+        val em = embedded.matcher(normalized)
+        while (em.find()) {
+            lines.add("DEL\t" + em.group(1).trimEnd())
+        }
+        for (raw in normalized.split('\n')) {
+            val t = raw.trim()
+            if (t.startsWith("DEL\t") && t.length > 40) {
+                lines.add(t)
+            }
+        }
+
+        val seenLine = mutableSetOf<String>()
+        for (line in lines) {
+            if (!seenLine.add(line.take(120))) continue
             val fields = line.split("\t")
-            if (fields.size < 46) continue
+            if (fields.size < 30) continue
 
             try {
                 val shipmentId = fields.getOrNull(8)?.trim().orEmpty()
@@ -68,6 +88,10 @@ object OpterHttpParser {
                         Tuple7(ShipmentType.DEL, recipientName, recipientStreet, recipientNumber, recipientZip, recipientCity, senderName)
                     !senderIsTerminal && senderStreet.isNotBlank() ->
                         Tuple7(ShipmentType.PICK, senderName, senderStreet, senderNumber, senderZip, senderCity, recipientName)
+                    recipientZip.length == 5 ->
+                        Tuple7(ShipmentType.DEL, recipientName, recipientStreet, recipientNumber, recipientZip, recipientCity, senderName)
+                    senderZip.length == 5 ->
+                        Tuple7(ShipmentType.PICK, senderName, senderStreet, senderNumber, senderZip, senderCity, recipientName)
                     else -> null
                 } ?: continue
 
@@ -76,7 +100,7 @@ object OpterHttpParser {
 
                 val (recStreet, recNumber) = recoverMissingStreet(resolved.name, resolved.street, resolved.number)
                 val address = buildAddress(recStreet, recNumber)
-                if (address.isBlank()) continue
+                if (address.isBlank() && resolved.zip.length != 5) continue
 
                 val colli = colliRaw.toIntOrNull()?.coerceAtLeast(0) ?: 1
                 val weight = parseWeight(weightRaw)
@@ -86,8 +110,8 @@ object OpterHttpParser {
                 shipments.add(
                     Shipment(
                         type = resolved.type,
-                        recipient = resolved.name,
-                        address = address,
+                        recipient = resolved.name.ifBlank { address },
+                        address = address.ifBlank { resolved.name },
                         zip = resolved.zip,
                         city = resolved.city,
                         colliCount = if (colli > 0) colli else 1,
@@ -174,8 +198,8 @@ object OpterHttpParser {
     }
 
     fun classifyByRoles(shipment: Shipment, mottagare: String?, avsandare: String? = null): Shipment {
-        val mott = mottagare?.lowercase().orEmpty()
-        val avs = avsandare?.lowercase().orEmpty()
+        val mott = foldAscii(mottagare.orEmpty())
+        val avs = foldAscii(avsandare.orEmpty())
         val mottIsTerminal = TERMINAL_NAMES.any { it in mott } || TERMINAL_STREETS.any { it in mott }
         val avsIsTerminal = TERMINAL_NAMES.any { it in avs } || TERMINAL_STREETS.any { it in avs }
         return when {
@@ -196,7 +220,7 @@ object OpterHttpParser {
         if (!looksMissing) return st to num
         val place = name.substringBefore("/").trim()
         if (place.length < 4) return st to num
-        val upper = place.uppercase().replace("Ö", "O").replace("Ä", "A").replace("Å", "A")
+        val upper = foldAscii(place).uppercase()
         val companySuffixes = listOf(" AB", " HB", " KB", " A/S", " AS", " GMBH", " LTD")
         val isCompany = companySuffixes.any { upper.endsWith(it.trim()) || upper.endsWith(it) }
         val placeHints = listOf("GARD", "GAARD", "GARDEN", "TORP", "ASPER", "OJEBRO")
@@ -249,21 +273,24 @@ object OpterHttpParser {
         return (h * 100L + mi) to (h * 60 + mi)
     }
 
-    private fun cleanPortkod(raw: String?): String? {
-        if (raw.isNullOrBlank()) return null
-        var s = raw.trim()
-        s = s.replace(Regex("""^PK\\s*:?\\s*""", RegexOption.IGNORE_CASE), "")
-        s = s.trim(' ', ',', ';')
-        if (s.isBlank() || s.length > 20) return null
-        if (s.any { it.isLetter() } && s.count { it.isDigit() } == 0) return null
+    private fun shortenCarrier(raw: String): String = CarrierNames.shorten(raw)
+
+    private fun foldAscii(text: String): String {
+        var s = text.lowercase()
+        s = s.replace("å", "a").replace("ä", "a").replace("ö", "o")
+            .replace("é", "e").replace("ü", "u")
+        s = s
+            .replace("Ã¥", "a").replace("Ã¤", "a").replace("Ã¶", "o")
+            .replace("Ã…", "a").replace("Ã„", "a").replace("Ã–", "o")
+            .replace("ã¥", "a").replace("ã¤", "a").replace("ã¶", "o")
+            .replace("Ã¡", "a").replace("Ã©", "e")
+        s = s.replace("¥", "a").replace("¤", "a").replace("¶", "o")
         return s
     }
 
-    private fun shortenCarrier(raw: String): String = CarrierNames.shorten(raw)
-
     private fun isTerminalAddress(streetOrAddress: String, name: String): Boolean {
-        val s = streetOrAddress.lowercase()
-        val n = name.lowercase()
+        val s = foldAscii(streetOrAddress)
+        val n = foldAscii(name)
         return TERMINAL_STREETS.any { it in s } || TERMINAL_NAMES.any { it in n }
     }
 
