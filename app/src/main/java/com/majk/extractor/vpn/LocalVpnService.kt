@@ -25,12 +25,6 @@ import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
-/**
- * Local VPN with userspace TCP relay:
- *  - Apps talk to the TUN as if talking to the internet
- *  - We open protected sockets to the real hosts and inject replies into the TUN
- *  - TCP port 81 payloads are logged and parsed (Opter Driver)
- */
 class LocalVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
@@ -96,14 +90,15 @@ class LocalVpnService : VpnService() {
             return
         }
 
-        CaptureRepository.clear()
+        // Keep previously parsed stops across VPN restarts (user can Clear in UI).
+        // Always start a fresh traffic log for this session.
         try {
             FileWriter(logFile, false).use { it.write("=== Extractor Traffic Log ===\n") }
         } catch (_: Exception) {}
 
         capturing.set(true)
         VpnStatus.isRunning = true
-        startForeground(NOTIFICATION_ID, createNotification("Capturing… 0 stops"))
+        startForeground(NOTIFICATION_ID, createNotification("Capturing… ${CaptureRepository.lastParseCount} stops"))
 
         captureJob = scope.launch {
             runCaptureLoop(vpnInterface!!)
@@ -274,6 +269,8 @@ class LocalVpnService : VpnService() {
                 CaptureRepository.addAll(found)
                 updateNotification()
                 Log.i(TAG, "Parsed ${found.size} stops (total ${CaptureRepository.lastParseCount})")
+            } else if (OpterHttpParser.containsDelMarker(text)) {
+                Log.w(TAG, "DEL marker present but parser returned 0 shipments (len=${text.length})")
             }
         } catch (e: Exception) {
             Log.w(TAG, "Parse: ${e.message}")
