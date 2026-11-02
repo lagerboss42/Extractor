@@ -153,6 +153,105 @@ object AddressStore {
         return out
     }
 
+    fun updateCode(address: String, zip: String, newCode: String): Boolean {
+        val key = addressKey(address, zip)
+        if (key.isBlank()) return false
+        val code = newCode.trim()
+        if (code.isEmpty()) return false
+        val values = ContentValues().apply {
+            put("code", code)
+            put("updated_at", System.currentTimeMillis())
+        }
+        val n = db().update("pk_codes", values, "address_key = ?", arrayOf(key))
+        if (n > 0) bump()
+        return n > 0
+    }
+
+    fun deleteCode(address: String, zip: String): Boolean {
+        val key = addressKey(address, zip)
+        if (key.isBlank()) return false
+        val n = db().delete("pk_codes", "address_key = ?", arrayOf(key))
+        if (n > 0) bump()
+        return n > 0
+    }
+
+    fun updateVisit(
+        address: String,
+        zip: String,
+        oldDate: String,
+        shipments: Int,
+        totalWeight: Int,
+        newDate: String
+    ): Boolean {
+        val key = addressKey(address, zip)
+        if (key.isBlank()) return false
+        val date = newDate.trim()
+        if (date.isEmpty() || shipments < 0 || totalWeight < 0) return false
+        val database = db()
+        if (date == oldDate) {
+            val values = ContentValues().apply {
+                put("shipments", shipments)
+                put("total_weight", totalWeight)
+            }
+            val n = database.update(
+                "address_log",
+                values,
+                "address_key = ? AND visit_date = ?",
+                arrayOf(key, oldDate)
+            )
+            if (n > 0) bump()
+            return n > 0
+        }
+        database.beginTransaction()
+        try {
+            val cur = database.rawQuery(
+                "SELECT address, zip, city FROM address_log WHERE address_key = ? AND visit_date = ? LIMIT 1",
+                arrayOf(key, oldDate)
+            )
+            val (addr, z, city) = cur.use { c ->
+                if (!c.moveToFirst()) return false
+                Triple(c.getString(0), c.getString(1).orEmpty(), c.getString(2).orEmpty())
+            }
+            database.delete(
+                "address_log",
+                "address_key = ? AND visit_date = ?",
+                arrayOf(key, oldDate)
+            )
+            val values = ContentValues().apply {
+                put("address_key", key)
+                put("address", addr)
+                put("zip", z)
+                put("city", city)
+                put("shipments", shipments)
+                put("total_weight", totalWeight)
+                put("visit_date", date)
+            }
+            database.insertWithOnConflict(
+                "address_log",
+                null,
+                values,
+                SQLiteDatabase.CONFLICT_REPLACE
+            )
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+        bump()
+        return true
+    }
+
+    fun deleteVisit(address: String, zip: String, date: String): Boolean {
+        val key = addressKey(address, zip)
+        if (key.isBlank()) return false
+        val n = db().delete(
+            "address_log",
+            "address_key = ? AND visit_date = ?",
+            arrayOf(key, date)
+        )
+        if (n > 0) bump()
+        return n > 0
+    }
+
     private fun upsertCode(database: SQLiteDatabase, s: Shipment, code: String, now: Long) {
         val values = ContentValues().apply {
             put("address_key", addressKey(s))
