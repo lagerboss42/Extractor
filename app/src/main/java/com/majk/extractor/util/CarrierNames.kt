@@ -1,18 +1,35 @@
 package com.majk.extractor.util
 
+/**
+ * Standardise carrier / delivery-type names for Excel output.
+ *
+ * Rules:
+ *   TNT*                      → TNT
+ *   Region*                   → Region
+ *   Närkefrakt* / Narke*      → Närke
+ *   Freja*                    → Freja
+ *   Dachser*                  → Dachser
+ *   Solar* + F7               → Solar F7
+ *   Solar* + F12              → Solar F12
+ *   Apoteket Nationella*      → APONAT
+ *   TWS*                      → TWS
+ *   Onninen* / Kesko*         → Kesko
+ */
 object CarrierNames {
 
     fun shorten(raw: String): String {
         if (raw.isBlank()) return ""
+        // Preserve fixed-stop marker
         if (raw.equals("kkböj", ignoreCase = true)) return "kkböj"
         val upper = raw.uppercase()
-            .replace("\u00c4", "A")
-            .replace("\u00d6", "O")
-            .replace("\u00c5", "A")
+            .replace("Ä", "A")
+            .replace("Ö", "O")
+            .replace("Å", "A")
 
         return when {
             "TNT" in upper -> "TNT"
             "TWS" in upper -> "TWS"
+            "ONNINEN" in upper || "KESKO" in upper -> "Kesko"
             "DACHSER" in upper -> "Dachser"
             "REGION" in upper -> "Region"
             "NARKEFRAKT" in upper || "NARKE FRAKT" in upper ||
