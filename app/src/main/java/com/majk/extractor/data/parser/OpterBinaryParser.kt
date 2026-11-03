@@ -54,14 +54,21 @@ object OpterBinaryParser {
             }
     }
 
-    fun parse(payload: String): List<Shipment> {
-        if (payload.length < 40) return emptyList()
-        val data = payload.toByteArray(Charsets.ISO_8859_1)
-        val fields = extractTlvs(data)
+    /** Safe byte-level parsing directly from the network stream. */
+    fun parse(payloadBytes: ByteArray): List<Shipment> {
+        if (payloadBytes.size < 40) return emptyList()
+        val fields = extractTlvs(payloadBytes)
         if (fields.size < 4) return emptyList()
 
         val addrs = buildAddresses(fields)
         return pairToShipments(addrs)
+    }
+
+    /** StringBuffer / traffic-log fallback (ISO-8859-1 round-trip). */
+    fun parse(payload: String): List<Shipment> {
+        if (payload.length < 40) return emptyList()
+        val data = payload.toByteArray(Charsets.ISO_8859_1)
+        return parse(data)
     }
 
     private fun extractTlvs(data: ByteArray): List<Tlv> {
@@ -111,27 +118,28 @@ object OpterBinaryParser {
                 i++
                 continue
             }
-
             var name = ""
-            for (j in (i - 1) downTo maxOf(0, i - 10)) {
+            var j = i - 1
+            while (j >= 0 && j >= i - 12) {
                 if (fields[j].id == F_NAME) {
                     name = fields[j].value
                     break
                 }
+                j--
             }
-
             var number = ""
             var zip = ""
             var city = ""
-            for (j in (i + 1) until minOf(fields.size, i + 8)) {
-                when (fields[j].id) {
-                    F_NUMBER -> if (number.isEmpty()) number = fields[j].value
-                    F_ZIP -> if (zip.isEmpty()) zip = fields[j].value
-                    F_CITY -> if (city.isEmpty()) city = fields[j].value
+            var k = i + 1
+            while (k < fields.size && k <= i + 8) {
+                when (fields[k].id) {
+                    F_NUMBER -> if (number.isEmpty()) number = fields[k].value
+                    F_ZIP -> if (zip.isEmpty()) zip = fields[k].value
+                    F_CITY -> if (city.isEmpty()) city = fields[k].value
                     F_NAME, F_STREET -> break
                 }
+                k++
             }
-
             val zipClean = zip.filter { it.isDigit() }.take(5)
             val cityClean = city.trim()
             if (zipClean.length == 5 && f.value.length >= 3) {
