@@ -252,28 +252,42 @@ class LocalVpnService : VpnService() {
             FileWriter(logFile, true).use { it.append(entry) }
         } catch (_: Exception) {}
 
-        parseAndStore(text)
+        parseAndStore(data, text)
         if (session.serverBuffer.length in 1..500_000) {
-            parseAndStore(session.serverBuffer.toString())
+            parseAndStoreBuffer(session.serverBuffer.toString())
         }
         if (session.clientBuffer.length in 1..500_000) {
-            parseAndStore(session.clientBuffer.toString())
+            parseAndStoreBuffer(session.clientBuffer.toString())
         }
     }
 
-    private fun parseAndStore(text: String) {
+    private fun parseAndStore(rawBytes: ByteArray, fallbackText: String) {
+        if (rawBytes.isEmpty()) return
+        try {
+            val found = OpterHttpParser.parse(rawBytes)
+            if (found.isNotEmpty()) {
+                CaptureRepository.addAll(found)
+                updateNotification()
+                Log.i(TAG, "Parsed ${found.size} stops via ByteArray (total ${CaptureRepository.lastParseCount})")
+            } else if (OpterHttpParser.containsDelMarker(fallbackText)) {
+                Log.w(TAG, "DEL marker present but parser returned 0 shipments via ByteArray")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Parse ByteArray: ${e.message}")
+        }
+    }
+
+    private fun parseAndStoreBuffer(text: String) {
         if (text.isBlank()) return
         try {
             val found = OpterHttpParser.parse(text)
             if (found.isNotEmpty()) {
                 CaptureRepository.addAll(found)
                 updateNotification()
-                Log.i(TAG, "Parsed ${found.size} stops (total ${CaptureRepository.lastParseCount})")
-            } else if (OpterHttpParser.containsDelMarker(text)) {
-                Log.w(TAG, "DEL marker present but parser returned 0 shipments (len=${text.length})")
+                Log.i(TAG, "Parsed ${found.size} stops via StringBuffer (total ${CaptureRepository.lastParseCount})")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Parse: ${e.message}")
+            Log.w(TAG, "Parse StringBuffer: ${e.message}")
         }
     }
 
