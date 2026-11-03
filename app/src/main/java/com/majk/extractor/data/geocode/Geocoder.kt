@@ -18,12 +18,14 @@ import java.util.concurrent.ConcurrentHashMap
  * Rate limit: ~1 request/second (Thread.sleep in nominatim())
  * In-memory cache avoids repeat lookups in the same session
  * Optional: Lantmäteriet Belägenhetsadress – set API credentials for higher accuracy
+ *
+ * Rows that already have lat/lon (from capture or cleaner) are not geocoded.
  */
 object Geocoder {
 
     private const val TAG = "Geocoder"
     private const val NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-    private const val USER_AGENT = "Extractor/0.2 (private logistics tool)"
+    private const val USER_AGENT = "Extractor/0.3.13a (private logistics tool)"
 
     @Volatile
     var lantmaterietUser: String? = null
@@ -35,6 +37,7 @@ object Geocoder {
 
     suspend fun geocodeAll(shipments: List<Shipment>): List<Shipment> = withContext(Dispatchers.IO) {
         shipments.map { s ->
+            // Do not call Nominatim when capture/cleaner already provided coordinates.
             if (s.lat != null && s.lon != null) return@map s
             val coords = lookup(s.address, s.zip, s.city)
             if (coords != null) s.copy(lat = coords.first, lon = coords.second) else s
@@ -72,98 +75,67 @@ object Geocoder {
             val url = URL(
                 "$NOMINATIM_URL?street=$street&postalcode=$postal&city=$c&country=Sweden&format=json&limit=1"
             )
-
-            val conn = (url.openConnection() as HttpURLConnection).apply {
+            val conn = url.openConnection() as HttpURLConnection
+            conn.apply {
                 requestMethod = "GET"
                 setRequestProperty("User-Agent", USER_AGENT)
-                connectTimeout = 10_000
-                readTimeout = 10_000
+                connectTimeout = 8000
+                readTimeout = 8000
             }
-
-            val code = conn.responseCode
-            if (code !in 200..299) {
-                Log.w(TAG, "Nominatim HTTP $code")
-                conn.disconnect()
+            if (conn.responseCode != 200) {
+                Log.w(TAG, "Nominatim HTTP ${conn.responseCode}")
                 return null
             }
-
             val body = conn.inputStream.bufferedReader().readText()
-            conn.disconnect()
-
             val arr = JSONArray(body)
             if (arr.length() == 0) return null
-
             val obj = arr.getJSONObject(0)
             val lat = obj.getString("lat").toDoubleOrNull() ?: return null
             val lon = obj.getString("lon").toDoubleOrNull() ?: return null
-            Log.d(TAG, "Nominatim: $address → $lat,$lon")
-            Pair(lat, lon)
+            lat to lon
         } catch (e: Exception) {
-            Log.w(TAG, "Nominatim failed for $address: ${e.message}")
+            Log.w(TAG, "Nominatim: ${e.message}")
             null
         }
     }
 
     private fun lantmateriet(address: String, zip: String, city: String): Pair<Double, Double>? {
-        val user = lantmaterietUser ?: return null
-        val pass = lantmaterietPass ?: return null
-
         return try {
-            val q = URLEncoder.encode("$address $zip $city", "UTF-8")
+            val user = lantmaterietUser ?: return null
+            val pass = lantmaterietPass ?: return null
+            val q = URLEncoder.encode("$address, $zip $city", "UTF-8")
             val url = URL(
-                "https://api.lantmateriet.se/distribution/produkter/belagenhetsadress/v4.2/referens/fritext?q=$q"
+                "https://api.lantmateriet.se/belagenhetsadress/v1/adresser?adress=$q&maxHits=1"
             )
-
-            val conn = (url.openConnection() as HttpURLConnection).apply {
+            val conn = url.openConnection() as HttpURLConnection
+            val token = android.util.Base64.encodeToString(
+                "$user:$pass".toByteArray(),
+                android.util.Base64.NO_WRAP
+            )
+            conn.apply {
                 requestMethod = "GET"
+                setRequestProperty("Authorization", "Basic $token")
                 setRequestProperty("Accept", "application/json")
-                val creds = android.util.Base64.encodeToString(
-                    "$user:$pass".toByteArray(),
-                    android.util.Base64.NO_WRAP
-                )
-                setRequestProperty("Authorization", "Basic $creds")
-                connectTimeout = 10_000
-                readTimeout = 10_000
+                connectTimeout = 8000
+                readTimeout = 8000
             }
-
-            val code = conn.responseCode
-            if (code !in 200..299) {
-                Log.w(TAG, "Lantmäteriet HTTP $code")
-                conn.disconnect()
+            if (conn.responseCode != 200) {
+                Log.w(TAG, "Lantmäteriet HTTP ${conn.responseCode}")
                 return null
             }
-
             val body = conn.inputStream.bufferedReader().readText()
-            conn.disconnect()
-            extractCoordsFromJson(body)
+            val root = JSONObject(body)
+            val features = root.optJSONArray("features") ?: return null
+            if (features.length() == 0) return null
+            val geom = features.getJSONObject(0).optJSONObject("geometry") ?: return null
+            val coords = geom.optJSONArray("coordinates") ?: return null
+            if (coords.length() < 2) return null
+            val lon = coords.getDouble(0)
+            val lat = coords.getDouble(1)
+            lat to lon
         } catch (e: Exception) {
-            Log.w(TAG, "Lantmäteriet failed for $address: ${e.message}")
+            Log.w(TAG, "Lantmäteriet: ${e.message}")
             null
         }
     }
-
-    private fun extractCoordsFromJson(body: String): Pair<Double, Double>? {
-        return try {
-            if (!body.trimStart().startsWith("{")) return null
-            val obj = JSONObject(body)
-            if (obj.has("features")) {
-                val features = obj.getJSONArray("features")
-                if (features.length() > 0) {
-                    val geom = features.getJSONObject(0).optJSONObject("geometry")
-                    if (geom != null && geom.optString("type") == "Point") {
-                        val coords = geom.getJSONArray("coordinates")
-                        return Pair(coords.getDouble(1), coords.getDouble(0))
-                    }
-                }
-            }
-            if (obj.has("lat") && obj.has("lon")) {
-                return Pair(obj.getDouble("lat"), obj.getDouble("lon"))
-            }
-            null
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    fun clearCache() = cache.clear()
 }
