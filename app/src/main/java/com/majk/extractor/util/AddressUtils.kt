@@ -2,7 +2,7 @@ package com.majk.extractor.util
 
 object AddressUtils {
     fun fixSpacing(address: String): String {
-        return address.replace(Regex("([A-Za-z\u00c5\u00c4\u00d6\u00e5\u00e4\u00f6])(\\d+)$")) {
+        return address.replace(Regex("([A-Za-zÅÄÖåäö])(\\d+)$")) {
             "${it.groupValues[1]} ${it.groupValues[2]}"
         }.trim()
     }
@@ -12,22 +12,48 @@ object AddressUtils {
     }
 
     /**
-     * Swedish-ish WGS84 pair: 55–70 lat, 10–25 lon.
-     * Accepts "58.319078, 15.102488" or "58.319078 15.102488".
+     * Area of interest (Östergötland / SE ops): lat 56.2–59.9, lon 11.1–19.3.
+     * Accepts 4–8 decimal digits; comma or dot decimals; separators comma / space / semicolon.
+     *
+     * Examples:
+     *   58.123456, 15.123456
+     *   58,123456, 15,123456
+     *   58,123456 15,123456
      */
     private val COORDS = Regex(
-        """(?<![\\d.])([5-6]\\d\\.\\d{3,})\\s*[,;\\s]\\s*([1][0-9]\\.\\d{3,}|[2][0-5]\\.\\d{3,})(?![\\d.])"""
+        """(?<![\\d.,])([5][6-9][.,]\\d{4,8}|[5][6-9]\\.\\d{4,8})\\s*[,;\\s]\\s*([1][1-9][.,]\\d{4,8}|[1][1-9]\\.\\d{4,8})(?![\\d.,])"""
     )
 
-    data class Coords(val lat: Double, val lon: Double)
+    data class Coords(val lat: Double, val lon: Double) {
+        /** Preferred export form: 58.123456, 15.123456 */
+        fun format(): String = formatCoords(lat, lon)
+    }
+
+    fun formatCoords(lat: Double, lon: Double): String {
+        fun fmt(v: Double): String {
+            val s = "%.8f".format(java.util.Locale.US, v).trimEnd('0').trimEnd('.')
+            val dot = s.indexOf('.')
+            return if (dot < 0) s else {
+                val decimals = s.length - dot - 1
+                if (decimals < 4) "%.4f".format(java.util.Locale.US, v) else s
+            }
+        }
+        return "${fmt(lat)}, ${fmt(lon)}"
+    }
+
+    private fun parseCoordToken(raw: String): Double? {
+        val t = raw.trim().replace(',', '.')
+        return t.toDoubleOrNull()
+    }
 
     fun extractCoords(vararg parts: String?): Coords? {
         val text = parts.filterNotNull().joinToString(" ")
         if (text.isBlank()) return null
-        val m = COORDS.find(text) ?: return null
-        val lat = m.groupValues[1].toDoubleOrNull() ?: return null
-        val lon = m.groupValues[2].toDoubleOrNull() ?: return null
-        if (lat !in 55.0..70.0 || lon !in 10.0..25.0) return null
+        val normalized = text.replace('\u00A0', ' ')
+        val m = COORDS.find(normalized) ?: return null
+        val lat = parseCoordToken(m.groupValues[1]) ?: return null
+        val lon = parseCoordToken(m.groupValues[2]) ?: return null
+        if (lat !in 56.2..59.9 || lon !in 11.1..19.3) return null
         return Coords(lat, lon)
     }
 
@@ -35,13 +61,11 @@ object AddressUtils {
     fun isCoordsOnlyAddress(address: String): Boolean {
         val t = address.trim()
         if (t.isEmpty()) return false
-        val c = extractCoords(t) ?: return false
+        extractCoords(t) ?: return false
         val stripped = t
-            .replace(c.lat.toString(), "")
-            .replace("%.6f".format(c.lat), "")
-            .replace(Regex("""[5-6]\\d\\.\\d+"""), "")
-            .replace(Regex("""[12]\\d\\.\\d+"""), "")
+            .replace(Regex("""[5-6]\\d[.,]\\d{3,8}"""), "")
+            .replace(Regex("""[1][0-9][.,]\\d{3,8}"""), "")
             .replace(Regex("""[\\s,;]+"""), "")
-        return stripped.isEmpty()
+        return stripped.isEmpty() || stripped.length < 3
     }
 }
