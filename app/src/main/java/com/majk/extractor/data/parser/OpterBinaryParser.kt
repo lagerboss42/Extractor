@@ -2,25 +2,24 @@ package com.majk.extractor.data.parser
 
 import com.majk.extractor.data.model.Shipment
 import com.majk.extractor.data.model.ShipmentType
-import java.nio.charset.Charset
+import com.majk.extractor.util.TextEncoding
 
 /**
  * Parses Opter binary TLV list-load payloads (port 81).
  *
  * String TLV:
- *   0x04 | fieldId_u8 | length_u16_le | utf8_bytes
+ *   0x04 | fieldId_u8 | length_u16_le | bytes
  *
  * Address field IDs:
- *   2  name, 6 street, 7 number, 8 zip, 9 city, 12 phone, 24 label
+ *   2  name, 6 street, 7 number, 8 zip, 9 city, 12 phone
  *
- * Stops appear as **pairs**: customer address + Alltransport terminal.
- * Order of the pair determines type (verified against live manifests):
- *   customer → terminal  = **pickup**
- *   terminal → customer  = **delivery**
+ * Stops appear as pairs: customer + Alltransport terminal.
+ *   customer → terminal  = pickup
+ *   terminal → customer  = delivery
+ *
+ * Fired when Opter is (re)started with VPN on — full route list-load.
  */
 object OpterBinaryParser {
-
-    private val UTF8: Charset = Charsets.UTF_8
 
     private const val F_NAME = 2
     private const val F_STREET = 6
@@ -40,10 +39,9 @@ object OpterBinaryParser {
     ) {
         val isTerminal: Boolean
             get() {
-                val s = street.lowercase()
-                val n = name.lowercase()
-                return "köpetorp" in s || "kopetorp" in s || "kromgatan" in s ||
-                    "alltransport" in n
+                val s = TextEncoding.foldAscii(street)
+                val n = TextEncoding.foldAscii(name)
+                return "kopetorpsgatan" in s || "kromgatan" in s || "alltransport" in n
             }
 
         val isJunk: Boolean
@@ -57,9 +55,10 @@ object OpterBinaryParser {
     }
 
     fun parse(payload: String): List<Shipment> {
+        if (payload.length < 40) return emptyList()
         val data = payload.toByteArray(Charsets.ISO_8859_1)
         val fields = extractTlvs(data)
-        if (fields.isEmpty()) return emptyList()
+        if (fields.size < 4) return emptyList()
 
         val addrs = buildAddresses(fields)
         return pairToShipments(addrs)
@@ -78,23 +77,29 @@ object OpterBinaryParser {
                         val v = b.toInt() and 0xFF
                         v < 9 || v in 14..31
                     }
-                    if (bad <= 2) {
-                        val s = try {
-                            String(slice, UTF8)
-                        } catch (_: Exception) {
-                            String(slice, Charsets.ISO_8859_1)
-                        }.trim()
-                        if (s.isNotEmpty() && s.any { it.isLetterOrDigit() }) {
-                            out.add(Tlv(i, id, s))
-                            i += 4 + len
-                            continue
+                    if (bad <= len / 3) {
+                        val value = decodeTlvString(slice)
+                        if (value.isNotBlank()) {
+                            out.add(Tlv(i, id, value))
                         }
+                        i += 4 + len
+                        continue
                     }
                 }
             }
             i++
         }
         return out
+    }
+
+    /** Wire strings are UTF-8; logs may contain Latin-1 mojibake — repair ÅÄÖ either way. */
+    private fun decodeTlvString(slice: ByteArray): String {
+        val asUtf8 = runCatching { String(slice, Charsets.UTF_8) }.getOrNull()
+        val candidate = when {
+            asUtf8 != null && !asUtf8.contains('\uFFFD') -> asUtf8
+            else -> String(slice, Charsets.ISO_8859_1)
+        }
+        return TextEncoding.fixSwedish(candidate).trim()
     }
 
     private fun buildAddresses(fields: List<Tlv>): List<Addr> {
@@ -108,7 +113,7 @@ object OpterBinaryParser {
             }
 
             var name = ""
-            for (j in i - 1 downTo maxOf(0, i - 6)) {
+            for (j in (i - 1) downTo maxOf(0, i - 10)) {
                 if (fields[j].id == F_NAME) {
                     name = fields[j].value
                     break
@@ -118,28 +123,29 @@ object OpterBinaryParser {
             var number = ""
             var zip = ""
             var city = ""
-            for (j in i + 1 until minOf(fields.size, i + 10)) {
+            for (j in (i + 1) until minOf(fields.size, i + 8)) {
                 when (fields[j].id) {
                     F_NUMBER -> if (number.isEmpty()) number = fields[j].value
-                    F_ZIP -> if (zip.isEmpty()) zip = fields[j].value.filter { it.isDigit() }.take(5)
+                    F_ZIP -> if (zip.isEmpty()) zip = fields[j].value
                     F_CITY -> if (city.isEmpty()) city = fields[j].value
                     F_NAME, F_STREET -> break
                 }
-                if (fields[j].offset - f.offset > 80) break
             }
 
             val zipClean = zip.filter { it.isDigit() }.take(5)
-            val cityClean = city.replace(Regex("""\\s+\\d+$"""), "").trim()
-            result.add(
-                Addr(
-                    offset = f.offset,
-                    name = name,
-                    street = f.value,
-                    number = number,
-                    zip = zipClean,
-                    city = cityClean
+            val cityClean = city.trim()
+            if (zipClean.length == 5 && f.value.length >= 3) {
+                result.add(
+                    Addr(
+                        offset = f.offset,
+                        name = name,
+                        street = f.value,
+                        number = number.trim(),
+                        zip = zipClean,
+                        city = cityClean
+                    )
                 )
-            )
+            }
             i++
         }
         return result
