@@ -70,6 +70,22 @@ object CaptureRepository {
         if (text.isBlank()) return
         rawChunks.add(text)
         addAll(OpterHttpParser.parse(text))
+        lastParseCount = parsedShipments.size
+        persist()
+    }
+
+    /**
+     * Re-read opter_traffic_log.txt (ISO-8859-1, same as VPN capture) and rebuild stop list.
+     * Use after a parser upgrade or when the UI shows 0 but the log has DEL lines.
+     */
+    fun reparseFromLogFile(logFile: File): Int {
+        if (!logFile.exists() || logFile.length() == 0L) {
+            clear(persist = true)
+            return 0
+        }
+        val text = logFile.readText(Charsets.ISO_8859_1)
+        loadFromLogText(text)
+        return parsedShipments.size
     }
 
     fun clear(persist: Boolean = true) {
@@ -85,16 +101,11 @@ object CaptureRepository {
     }
 
     private fun dedupeKey(s: Shipment): String {
-        if (!s.rawId.isNullOrBlank()) return "id:${s.rawId}"
-        return listOf(
-            s.type.name,
-            s.address.lowercase().replace(" ", ""),
-            s.zip.filter { it.isDigit() },
-            s.recipient.lowercase().substringBefore("/").trim(),
-            s.colliCount.toString(),
-            s.weightKg.toString(),
-            s.carrier.lowercase()
-        ).joinToString("|")
+        val addr = s.address.lowercase().replace(" ", "")
+        val zip = s.zip.filter { it.isDigit() }
+        val name = s.recipient.lowercase().replace(" ", "")
+        val type = s.type.name
+        return "$type|$name|$addr|$zip|${s.rawId.orEmpty()}"
     }
 
     private fun persist() {
@@ -115,13 +126,13 @@ object CaptureRepository {
                         put("comment", s.comment ?: JSONObject.NULL)
                         put("carrier", s.carrier)
                         put("rawId", s.rawId ?: JSONObject.NULL)
-                        put("sender", s.sender ?: JSONObject.NULL)
                         if (s.lat != null) put("lat", s.lat) else put("lat", JSONObject.NULL)
                         if (s.lon != null) put("lon", s.lon) else put("lon", JSONObject.NULL)
+                        put("sender", s.sender ?: JSONObject.NULL)
                         if (s.earliestMinutes != null) put("earliestMinutes", s.earliestMinutes)
-                            else put("earliestMinutes", JSONObject.NULL)
+                        else put("earliestMinutes", JSONObject.NULL)
                         if (s.latestMinutes != null) put("latestMinutes", s.latestMinutes)
-                            else put("latestMinutes", JSONObject.NULL)
+                        else put("latestMinutes", JSONObject.NULL)
                     }
                 )
             }
@@ -157,9 +168,9 @@ object CaptureRepository {
                         lon = if (o.isNull("lon")) null else o.optDouble("lon"),
                         sender = o.optString("sender", null)?.takeIf { it.isNotBlank() && it != "null" },
                         earliestMinutes = if (o.isNull("earliestMinutes")) null
-                            else o.optInt("earliestMinutes"),
+                        else o.optInt("earliestMinutes"),
                         latestMinutes = if (o.isNull("latestMinutes")) null
-                            else o.optInt("latestMinutes")
+                        else o.optInt("latestMinutes")
                     )
                 )
             }
