@@ -50,10 +50,12 @@ object ManifestCleaner {
     }
 
     private fun cleanSingle(s: Shipment): Shipment {
-        val address = AddressUtils.fixSpacing(s.address)
+        val spaced = AddressUtils.fixSpacing(s.address)
         val comment = s.comment?.trim()?.takeIf { it.isNotEmpty() }
         val found = s.lat?.let { la -> s.lon?.let { lo -> AddressUtils.Coords(la, lo) } }
-            ?: AddressUtils.extractCoords(address, comment, s.recipient)
+            ?: AddressUtils.extractCoords(spaced, comment, s.recipient)
+        // Prefer coordinates over street address when present (including writing into Address field).
+        val address = if (found != null) found.format() else spaced
         return s.copy(
             recipient = companyOnly(s.recipient),
             sender = s.sender?.let { companyOnly(it) },
@@ -68,9 +70,28 @@ object ManifestCleaner {
         )
     }
 
+    /** Company / site name only; strip slash-suffix and drop duplicate name halves. */
     private fun companyOnly(name: String): String {
-        val trimmed = name.trim()
+        var trimmed = name.trim().replace(Regex("\\s+"), " ")
         if (trimmed.isEmpty()) return trimmed
+        if ("/" in trimmed) {
+            val parts = trimmed.split("/").map { it.trim() }.filter { it.isNotEmpty() }
+            val out = mutableListOf<String>()
+            for (p in parts) {
+                if (out.isEmpty()) {
+                    out.add(p)
+                } else {
+                    val prev = out.last()
+                    if (prev.equals(p, ignoreCase = true)) continue
+                    if (p.contains(prev, ignoreCase = true) || prev.contains(p, ignoreCase = true)) {
+                        if (p.length > prev.length) out[out.lastIndex] = p
+                        continue
+                    }
+                    out.add(p)
+                }
+            }
+            trimmed = out.joinToString(" / ")
+        }
         val beforeSlash = trimmed.substringBefore("/").trim()
         return beforeSlash.ifEmpty { trimmed }
     }
@@ -167,6 +188,12 @@ object ManifestCleaner {
             .ifBlank { "" }
     }
 
+    /**
+     * Fixed-port / Cloetta merge.
+     * Recipient = site name (Port K / Port F / Port D / Cloetta Godsmottagning).
+     * Address = formatted coordinates (preferred over street) — Option B.
+     * Always writes canonical lat/lon on the shipment.
+     */
     private fun mergeFixedPort(
         group: List<Shipment>,
         recipient: String,
@@ -188,7 +215,7 @@ object ManifestCleaner {
         return Shipment(
             type = type,
             recipient = recipient,
-            address = "",
+            address = AddressUtils.formatCoords(lat, lon),
             zip = zip,
             city = city,
             colliCount = group.sumOf { it.colliCount },
@@ -231,15 +258,23 @@ object ManifestCleaner {
             }
         }.firstOrNull()
 
+        val lat = coords?.lat ?: first.lat
+        val lon = coords?.lon ?: first.lon
+        val address = if (lat != null && lon != null) {
+            AddressUtils.formatCoords(lat, lon)
+        } else {
+            first.address
+        }
         return first.copy(
             recipient = mergedRecipient,
+            address = address,
             colliCount = totalColli,
             weightKg = totalWeight,
             portkod = bestPortkod,
             comment = bestComment,
             carrier = carriers.ifBlank { first.carrier },
-            lat = coords?.lat ?: first.lat,
-            lon = coords?.lon ?: first.lon,
+            lat = lat,
+            lon = lon,
             earliestMinutes = group.mapNotNull { it.earliestMinutes }.minOrNull()
                 ?: first.earliestMinutes,
             latestMinutes = group.mapNotNull { it.latestMinutes }.maxOrNull()
