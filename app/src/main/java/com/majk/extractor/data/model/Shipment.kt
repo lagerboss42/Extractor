@@ -1,5 +1,7 @@
 package com.majk.extractor.data.model
 
+import com.majk.extractor.util.AddressUtils
+
 enum class ShipmentType {
     DEL,
     PICK;
@@ -40,9 +42,7 @@ data class Shipment(
     val latestMinutes: Int? = null
 ) {
     /**
-     * Time-frame column for Excel.
-     * - Both minutes == 0 → `08-14`
-     * - Otherwise → `08:15-14:30`
+     * Time-frame column for Excel — always `hh:mm-hh:mm` when both bounds exist.
      * Empty when either bound is missing.
      */
     fun toTimeFrameColumn(): String {
@@ -52,13 +52,15 @@ data class Shipment(
         val em = e % 60
         val lh = l / 60
         val lm = l % 60
-        return if (em == 0 && lm == 0) {
-            "%02d-%02d".format(eh, lh)
-        } else {
-            "%02d:%02d-%02d:%02d".format(eh, em, lh, lm)
-        }
+        return "%02d:%02d-%02d:%02d".format(eh, em, lh, lm)
     }
 
+    /**
+     * Info column layout (fixed order):
+     *   colli / weight / pk / other / carrier
+     *
+     * Example:  "4 / 56 kg / PK 1234 / Fullmakt ytterdörr / TNT"
+     */
     fun toInfoColumn(): String {
         val parts = mutableListOf<String>()
 
@@ -81,7 +83,15 @@ data class Shipment(
         return parts.joinToString(" / ")
     }
 
+    /** Recipient column — blank when carrier is Region */
     fun excelRecipient(): String {
         return if (carrier.equals("Region", ignoreCase = true)) "" else recipient
+    }
+
+    /** Combined coords for the trailing Excel column (empty header). */
+    fun excelCoordsColumn(): String {
+        val la = lat ?: return ""
+        val lo = lon ?: return ""
+        return AddressUtils.formatCoords(la, lo)
     }
 }
