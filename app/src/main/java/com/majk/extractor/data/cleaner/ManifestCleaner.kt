@@ -22,27 +22,27 @@ object ManifestCleaner {
 
     private const val PORT_K_RECIPIENT = "Port K"
     private const val PORT_K_ZIP = "59535"
-    private const val PORT_K_CITY = "MJ\u00d6LBY"
-    private const val PORT_K_LAT = 58.319078
-    private const val PORT_K_LON = 15.102488
+    private const val PORT_K_CITY = "Mjölby"
+    private const val PORT_K_ADDRESS = "8493+J2P Mjölby"
 
     private const val PORT_F_RECIPIENT = "Port F"
     private const val PORT_F_ZIP = "59535"
-    private const val PORT_F_CITY = "MJ\u00d6LBY"
-    private const val PORT_F_LAT = 58.3214745
-    private const val PORT_F_LON = 15.1031435
+    private const val PORT_F_CITY = "Mjölby"
+    private const val PORT_F_ADDRESS = "84C3+H7H Mjölby"
 
     private const val PORT_D_RECIPIENT = "Port D"
     private const val PORT_D_ZIP = "59535"
-    private const val PORT_D_CITY = "MJ\u00d6LBY"
-    private const val PORT_D_LAT = 58.3174964
-    private const val PORT_D_LON = 15.1119756
+    private const val PORT_D_CITY = "Mjölby"
+    private const val PORT_D_ADDRESS = "8496+2RC Mjölby"
 
-    private const val CLOETTA_RECIPIENT = "Cloetta Godsmottagning"
+    /** Delivery / godsmottagning site. */
+    private const val CLOETTA_DEL_RECIPIENT = "Cloetta Godsmottagning"
+    private const val CLOETTA_DEL_ADDRESS = "GG72+6F Ljungsbro"
+    /** Pickup site (not the same as godsmottagning). */
+    private const val CLOETTA_PICK_RECIPIENT = "Cloetta"
+    private const val CLOETTA_PICK_ADDRESS = "GF7X+3V Ljungsbro"
     private const val CLOETTA_ZIP = "58580"
-    private const val CLOETTA_CITY = "LJUNGSBRO"
-    private const val CLOETTA_LAT = 58.5130703
-    private const val CLOETTA_LON = 15.5011890
+    private const val CLOETTA_CITY = "Ljungsbro"
 
     fun cleanAndConsolidate(raw: List<Shipment>): List<Shipment> {
         val cleaned = raw.map { cleanSingle(it) }
@@ -54,7 +54,7 @@ object ManifestCleaner {
         val comment = s.comment?.trim()?.takeIf { it.isNotEmpty() }
         val found = s.lat?.let { la -> s.lon?.let { lo -> AddressUtils.Coords(la, lo) } }
             ?: AddressUtils.extractCoords(spaced, comment, s.recipient)
-        // Prefer coordinates over street address when present (including writing into Address field).
+        // Prefer capture/hard-coded coords over street in Address. Never Nominatim here.
         val address = if (found != null) found.format() else spaced
         return s.copy(
             recipient = companyOnly(s.recipient),
@@ -114,10 +114,19 @@ object ManifestCleaner {
         }
 
         val result = mutableListOf<Shipment>()
-        if (portK.isNotEmpty()) result.add(mergeFixedPort(portK, PORT_K_RECIPIENT, PORT_K_ZIP, PORT_K_CITY, PORT_K_LAT, PORT_K_LON))
-        if (portF.isNotEmpty()) result.add(mergeFixedPort(portF, PORT_F_RECIPIENT, PORT_F_ZIP, PORT_F_CITY, PORT_F_LAT, PORT_F_LON))
-        if (portD.isNotEmpty()) result.add(mergeFixedPort(portD, PORT_D_RECIPIENT, PORT_D_ZIP, PORT_D_CITY, PORT_D_LAT, PORT_D_LON))
-        if (cloetta.isNotEmpty()) result.add(mergeFixedPort(cloetta, CLOETTA_RECIPIENT, CLOETTA_ZIP, CLOETTA_CITY, CLOETTA_LAT, CLOETTA_LON))
+        // Same-type only: never merge pickups with deliveries at a fixed site.
+        addFixedByType(result, portK, PORT_K_RECIPIENT, PORT_K_ADDRESS, PORT_K_ZIP, PORT_K_CITY)
+        addFixedByType(result, portF, PORT_F_RECIPIENT, PORT_F_ADDRESS, PORT_F_ZIP, PORT_F_CITY)
+        addFixedByType(result, portD, PORT_D_RECIPIENT, PORT_D_ADDRESS, PORT_D_ZIP, PORT_D_CITY)
+        // Cloetta pickup vs godsmottagning are different places + different recipient labels.
+        val cloettaPick = cloetta.filter { it.type == ShipmentType.PICK }
+        val cloettaDel = cloetta.filter { it.type != ShipmentType.PICK }
+        if (cloettaPick.isNotEmpty()) {
+            result.add(mergeFixedPort(cloettaPick, CLOETTA_PICK_RECIPIENT, CLOETTA_PICK_ADDRESS, CLOETTA_ZIP, CLOETTA_CITY))
+        }
+        if (cloettaDel.isNotEmpty()) {
+            result.add(mergeFixedPort(cloettaDel, CLOETTA_DEL_RECIPIENT, CLOETTA_DEL_ADDRESS, CLOETTA_ZIP, CLOETTA_CITY))
+        }
 
         val grouped = rest.groupBy {
             Triple(
@@ -188,24 +197,33 @@ object ManifestCleaner {
             .ifBlank { "" }
     }
 
+    private fun addFixedByType(
+        result: MutableList<Shipment>,
+        group: List<Shipment>,
+        recipient: String,
+        address: String,
+        zip: String,
+        city: String
+    ) {
+        if (group.isEmpty()) return
+        val picks = group.filter { it.type == ShipmentType.PICK }
+        val dels = group.filter { it.type != ShipmentType.PICK }
+        if (picks.isNotEmpty()) result.add(mergeFixedPort(picks, recipient, address, zip, city))
+        if (dels.isNotEmpty()) result.add(mergeFixedPort(dels, recipient, address, zip, city))
+    }
+
     /**
-     * Fixed-port / Cloetta merge.
-     * Recipient = site name (Port K / Port F / Port D / Cloetta Godsmottagning).
-     * Address = formatted coordinates (preferred over street) — Option B.
-     * Always writes canonical lat/lon on the shipment.
+     * Fixed-site merge. [address] is a plus code + city (e.g. "8493+J2P Mjölby").
+     * Caller must pass a same-type group only (pickups or deliveries, never mixed).
      */
     private fun mergeFixedPort(
         group: List<Shipment>,
         recipient: String,
+        address: String,
         zip: String,
-        city: String,
-        lat: Double,
-        lon: Double
+        city: String
     ): Shipment {
-        val type = when {
-            group.any { it.type == ShipmentType.DEL } -> ShipmentType.DEL
-            else -> ShipmentType.PICK
-        }
+        val type = group.first().type
         val comments = group.mapNotNull { it.comment }
             .filter { it.isNotBlank() }
             .distinct()
@@ -215,7 +233,7 @@ object ManifestCleaner {
         return Shipment(
             type = type,
             recipient = recipient,
-            address = AddressUtils.formatCoords(lat, lon),
+            address = address,
             zip = zip,
             city = city,
             colliCount = group.sumOf { it.colliCount },
@@ -223,8 +241,8 @@ object ManifestCleaner {
             portkod = group.mapNotNull { it.portkod }.firstOrNull(),
             comment = comments,
             carrier = mergeCarriers(group).ifBlank { "TNT" },
-            lat = lat,
-            lon = lon,
+            lat = null,
+            lon = null,
             earliestMinutes = group.mapNotNull { it.earliestMinutes }.minOrNull(),
             latestMinutes = group.mapNotNull { it.latestMinutes }.maxOrNull()
         )
@@ -260,6 +278,7 @@ object ManifestCleaner {
 
         val lat = coords?.lat ?: first.lat
         val lon = coords?.lon ?: first.lon
+        // Only put capture coords in Address — never Nominatim-only.
         val address = if (lat != null && lon != null) {
             AddressUtils.formatCoords(lat, lon)
         } else {
