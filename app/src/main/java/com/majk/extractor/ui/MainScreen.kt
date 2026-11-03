@@ -189,7 +189,7 @@ fun MainScreen() {
         var raw = CaptureRepository.getShipments()
         if (raw.isEmpty() && logFile.exists()) {
             status = "Re-parsing traffic log…"
-            CaptureRepository.loadFromLogText(logFile.readText())
+            CaptureRepository.reparseFromLogFile(logFile)
             raw = CaptureRepository.getShipments()
             stopCount = CaptureRepository.lastParseCount
         }
@@ -287,6 +287,23 @@ fun MainScreen() {
             Text("Share / Open Traffic Log")
         }
 
+        Button(
+            onClick = {
+                val n = CaptureRepository.reparseFromLogFile(logFile)
+                stopCount = n
+                status = if (n > 0)
+                    "Re-parsed log → $n stops"
+                else if (!logFile.exists() || logFile.length() == 0L)
+                    "No traffic log to re-parse"
+                else
+                    "Re-parsed log → 0 stops (no DEL/list rows the parser accepts)"
+            },
+            enabled = logFile.exists(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Re-parse traffic log")
+        }
+
         if (lastFile != null) {
             Button(
                 onClick = {
@@ -371,11 +388,11 @@ fun MainScreen() {
 
         Text(
             text = if (vpnRunning)
-                "VPN on. Open Opter in the SAME profile as Extractor (personal, not work). Pull to refresh the stop list."
+                "VPN on. Open Opter in the SAME profile. Pull to refresh the stop list (loads cached route). Open a stop to force detail traffic."
             else
                 "IMPORTANT: Extractor VPN only sees apps in the same Android profile.\n" +
                 "1. Start VPN\n2. Open Opter (personal profile) → refresh stops\n" +
-                "3. Stop VPN → check traffic log for :81\n4. Generate Excel",
+                "3. Stop VPN → check traffic log for :81\n4. Re-parse log if count is 0\n5. Generate Excel",
             style = MaterialTheme.typography.bodyMedium
         )
     }
