@@ -83,9 +83,28 @@ object CaptureRepository {
             clear(persist = true)
             return 0
         }
-        val text = logFile.readText(Charsets.ISO_8859_1)
-        loadFromLogText(text)
-        return parsedShipments.size
+        return try {
+            // Cap at 8 MiB to avoid OOM on pathological logs
+            val maxBytes = 8L * 1024 * 1024
+            val text = if (logFile.length() > maxBytes) {
+                logFile.inputStream().use { ins ->
+                    val buf = ByteArray(maxBytes.toInt())
+                    val n = ins.read(buf)
+                    String(buf, 0, n.coerceAtLeast(0), Charsets.ISO_8859_1)
+                }
+            } else {
+                logFile.readText(Charsets.ISO_8859_1)
+            }
+            loadFromLogText(text)
+            parsedShipments.size
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "Re-parse OOM", e)
+            lastParseCount = parsedShipments.size
+            lastParseCount
+        } catch (e: Exception) {
+            Log.e(TAG, "Re-parse failed: ${e.message}", e)
+            throw e
+        }
     }
 
     fun clear(persist: Boolean = true) {
