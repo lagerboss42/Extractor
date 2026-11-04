@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Extractor</string>
+    <string name="a11y_service_description">Reads Opter Driver stop list on screen so Extractor can fill colli, weight, carrier and times without relying only on VPN traffic.</string>
 </resources>
