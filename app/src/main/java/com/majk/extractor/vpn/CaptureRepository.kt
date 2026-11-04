@@ -12,7 +12,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Holds parsed shipments for the current capture session.
- * Deduplicates aggressively (re-parsed packets must not inflate the count).
+ * VPN, Accessibility and OCR all write here (dedupe / enrich).
  * Persists to disk so a crash during Excel export does not wipe the capture.
  */
 object CaptureRepository {
@@ -60,11 +60,69 @@ object CaptureRepository {
         }
     }
 
+    /**
+     * Merge stops from OCR / Accessibility. Prefer non-empty fields from [incoming]
+     * when a matching stop already exists (same type+address+zip); otherwise append.
+     * VPN coords / IDs are kept when import lacks them.
+     */
+    fun mergeEnrich(incoming: List<Shipment>) {
+        if (incoming.isEmpty()) return
+        var changed = 0
+        for (s in incoming) {
+            val key = enrichKey(s)
+            val idx = parsedShipments.indexOfFirst { enrichKey(it) == key }
+            if (idx < 0) {
+                parsedShipments.add(s)
+                changed++
+            } else {
+                val old = parsedShipments[idx]
+                val merged = old.copy(
+                    recipient = s.recipient.ifBlank { old.recipient },
+                    address = when {
+                        looksLikeCoords(s.address) -> s.address
+                        looksLikeCoords(old.address) -> old.address
+                        s.address.isNotBlank() -> s.address
+                        else -> old.address
+                    },
+                    city = s.city.ifBlank { old.city },
+                    colliCount = if (s.colliCount > 0) s.colliCount else old.colliCount,
+                    weightKg = if (s.weightKg > 0) s.weightKg else old.weightKg,
+                    carrier = s.carrier.ifBlank { old.carrier },
+                    portkod = s.portkod ?: old.portkod,
+                    comment = s.comment ?: old.comment,
+                    lat = s.lat ?: old.lat,
+                    lon = s.lon ?: old.lon,
+                    sender = s.sender ?: old.sender,
+                    earliestMinutes = s.earliestMinutes ?: old.earliestMinutes,
+                    latestMinutes = s.latestMinutes ?: old.latestMinutes
+                )
+                if (merged != old) {
+                    parsedShipments[idx] = merged
+                    changed++
+                }
+            }
+        }
+        if (changed > 0) {
+            lastParseCount = parsedShipments.size
+            persist()
+        }
+    }
+
+    private fun enrichKey(s: Shipment): String {
+        val addr = s.address.lowercase().replace(" ", "")
+        val zip = s.zip.filter { it.isDigit() }
+        return "${s.type.name}|$addr|$zip"
+    }
+
+    private fun looksLikeCoords(a: String): Boolean {
+        val t = a.replace(',', ' ')
+        return Regex("""\\d{2}\\.\\d+\\s+\\d{2}\\.\\d+""").containsMatchIn(t)
+    }
+
     fun getShipments(): List<Shipment> = parsedShipments.toList()
 
     fun getRawLog(): String = rawChunks.joinToString("\n")
 
-    /** Re-parse an entire log file into shipments (deduped). */
     fun loadFromLogText(text: String) {
         clear(persist = false)
         if (text.isBlank()) return
@@ -74,17 +132,12 @@ object CaptureRepository {
         persist()
     }
 
-    /**
-     * Re-read opter_traffic_log.txt (ISO-8859-1, same as VPN capture) and rebuild stop list.
-     * Use after a parser upgrade or when the UI shows 0 but the log has DEL lines.
-     */
     fun reparseFromLogFile(logFile: File): Int {
         if (!logFile.exists() || logFile.length() == 0L) {
             clear(persist = true)
             return 0
         }
         return try {
-            // Cap at 8 MiB to avoid OOM on pathological logs
             val maxBytes = 8L * 1024 * 1024
             val text = if (logFile.length() > maxBytes) {
                 logFile.inputStream().use { ins ->
