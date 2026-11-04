@@ -27,7 +27,9 @@ import com.majk.extractor.data.model.ShipmentType
 import com.majk.extractor.vpn.CaptureRepository
 import com.majk.extractor.vpn.LocalVpnService
 import com.majk.extractor.vpn.VpnStatus
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 @Composable
@@ -144,39 +146,43 @@ fun MainScreen() {
             geocoding = true
             status = "Building manifest…"
             try {
-                Geocoder.lantmaterietUser = lmUser.ifBlank { null }
-                Geocoder.lantmaterietPass = lmPass.ifBlank { null }
+                data class GenResult(val file: File, val message: String)
+                val result = withContext(Dispatchers.IO) {
+                    Geocoder.lantmaterietUser = lmUser.ifBlank { null }
+                    Geocoder.lantmaterietPass = lmPass.ifBlank { null }
 
-                val cleaned = ManifestCleaner.cleanAndConsolidate(raw)
-                val withPk = AddressStore.applyPortkods(cleaned)
-                val opterKeys = withPk.map {
-                    "${it.address.lowercase().replace(" ", "")}|${it.zip.filter { c -> c.isDigit() }}"
-                }.toSet()
-                val kkbRows = activeFixedShipments().filter { s ->
-                    val k = "${s.address.lowercase().replace(" ", "")}|${s.zip.filter { c -> c.isDigit() }}"
-                    k.isBlank() || k !in opterKeys
-                }
-                val combined = withPk + kkbRows
+                    val cleaned = ManifestCleaner.cleanAndConsolidate(raw)
+                    val withPk = AddressStore.applyPortkods(cleaned)
+                    val opterKeys = withPk.map {
+                        "${it.address.lowercase().replace(" ", "")}|${it.zip.filter { c -> c.isDigit() }}"
+                    }.toSet()
+                    val kkbRows = activeFixedShipments().filter { s ->
+                        val k = "${s.address.lowercase().replace(" ", "")}|${s.zip.filter { c -> c.isDigit() }}"
+                        k.isBlank() || k !in opterKeys
+                    }
+                    val combined = withPk + kkbRows
 
-                status = "Geocoding (${combined.size} stops)…"
-                val withCoords = try {
-                    Geocoder.geocodeAll(combined)
-                } catch (e: Exception) {
-                    status = "Geocode skipped: ${e.message}"
-                    combined
-                }
+                    val withCoords = try {
+                        Geocoder.geocodeAll(combined)
+                    } catch (_: Exception) {
+                        combined
+                    }
 
-                status = "Writing Excel…"
-                val file = ExcelGenerator.generate(context, withCoords)
-                try {
-                    AddressStore.recordVisits(withPk)
-                } catch (_: Exception) {
+                    val file = ExcelGenerator.generate(context, withCoords)
+                    try {
+                        AddressStore.recordVisits(withPk)
+                    } catch (_: Exception) {
+                    }
+                    val geoCount = withCoords.count { it.lat != null }
+                    val kkb = kkbRows.size
+                    val remembered = withPk.count { it.portkodRemembered }
+                    GenResult(
+                        file,
+                        "$label: ${withCoords.size} rows (${withPk.size} from Opter, $kkb kkböj, $remembered saved PK), $geoCount geocoded"
+                    )
                 }
-                lastFile = file
-                val geoCount = withCoords.count { it.lat != null }
-                val kkb = kkbRows.size
-                val remembered = withPk.count { it.portkodRemembered }
-                status = "$label: ${withCoords.size} rows (${withPk.size} from Opter, $kkb kkböj, $remembered saved PK), $geoCount geocoded"
+                lastFile = result.file
+                status = result.message
             } catch (e: Exception) {
                 status = "Error: ${e.javaClass.simpleName}: ${e.message}"
             } finally {
@@ -186,18 +192,29 @@ fun MainScreen() {
     }
 
     fun generateFromCapture() {
-        var raw = CaptureRepository.getShipments()
-        if (raw.isEmpty() && logFile.exists()) {
-            status = "Re-parsing traffic log…"
-            CaptureRepository.reparseFromLogFile(logFile)
-            raw = CaptureRepository.getShipments()
-            stopCount = CaptureRepository.lastParseCount
+        scope.launch {
+            geocoding = true
+            try {
+                var raw = CaptureRepository.getShipments()
+                if (raw.isEmpty() && logFile.exists()) {
+                    status = "Re-parsing traffic log…"
+                    withContext(Dispatchers.IO) {
+                        CaptureRepository.reparseFromLogFile(logFile)
+                    }
+                    raw = CaptureRepository.getShipments()
+                    stopCount = CaptureRepository.lastParseCount
+                }
+                if (raw.isEmpty() && activeFixedIds.isEmpty()) {
+                    status = "No stops captured and no kkböj selected"
+                    return@launch
+                }
+                geocoding = false
+                generateExcel(raw, "Capture Excel")
+            } catch (e: Exception) {
+                status = "Error: ${e.javaClass.simpleName}: ${e.message}"
+                geocoding = false
+            }
         }
-        if (raw.isEmpty() && activeFixedIds.isEmpty()) {
-            status = "No stops captured and no kkböj selected"
-            return
-        }
-        generateExcel(raw, "Capture Excel")
     }
 
     fun generateTestExcel() {
@@ -289,14 +306,22 @@ fun MainScreen() {
 
         Button(
             onClick = {
-                val n = CaptureRepository.reparseFromLogFile(logFile)
-                stopCount = n
-                status = if (n > 0)
-                    "Re-parsed log → $n stops"
-                else if (!logFile.exists() || logFile.length() == 0L)
-                    "No traffic log to re-parse"
-                else
-                    "Re-parsed log → 0 stops (no DEL/list rows the parser accepts)"
+                scope.launch {
+                    status = "Re-parsing traffic log…"
+                    try {
+                        val n = withContext(Dispatchers.IO) {
+                            CaptureRepository.reparseFromLogFile(logFile)
+                        }
+                        stopCount = n
+                        status = when {
+                            n > 0 -> "Re-parsed log → $n stops"
+                            !logFile.exists() || logFile.length() == 0L -> "No traffic log to re-parse"
+                            else -> "Re-parsed log → 0 stops (no DEL/list rows the parser accepts)"
+                        }
+                    } catch (e: Exception) {
+                        status = "Re-parse failed: ${e.javaClass.simpleName}: ${e.message}"
+                    }
+                }
             },
             enabled = logFile.exists(),
             modifier = Modifier.fillMaxWidth()
@@ -388,10 +413,10 @@ fun MainScreen() {
 
         Text(
             text = if (vpnRunning)
-                "VPN on. Open Opter in the SAME profile. Pull to refresh the stop list (loads cached route). Open a stop to force detail traffic."
+                "VPN on. Open Opter in the SAME profile. Restart Opter to force list-load."
             else
                 "IMPORTANT: Extractor VPN only sees apps in the same Android profile.\n" +
-                "1. Start VPN\n2. Open Opter (personal profile) → refresh stops\n" +
+                "1. Start VPN\n2. Open/restart Opter (same profile)\n" +
                 "3. Stop VPN → check traffic log for :81\n4. Re-parse log if count is 0\n5. Generate Excel",
             style = MaterialTheme.typography.bodyMedium
         )
