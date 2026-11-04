@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.majk.extractor.accessibility.OpterAccessibilityService
 import com.majk.extractor.data.cleaner.ManifestCleaner
 import com.majk.extractor.data.db.AddressStore
 import com.majk.extractor.data.excel.ExcelGenerator
@@ -67,6 +68,14 @@ fun MainScreen() {
             kotlinx.coroutines.delay(1000)
         }
         stopCount = CaptureRepository.lastParseCount
+    }
+
+    // Refresh count while a11y may be filling stops
+    LaunchedEffect(Unit) {
+        while (true) {
+            stopCount = CaptureRepository.lastParseCount
+            kotlinx.coroutines.delay(1500)
+        }
     }
 
     fun actuallyStartVpn() {
@@ -287,6 +296,28 @@ fun MainScreen() {
         )
 
         Button(
+            onClick = { OpterAccessibilityService.openSettings(context) },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            )
+        ) {
+            Text(
+                if (OpterAccessibilityService.isRunning)
+                    "Accessibility: ON (tap to open settings)"
+                else
+                    "Enable Accessibility for Opter"
+            )
+        }
+
+        Text(
+            text = "Share an Opter stop-list screenshot to Extractor to OCR-import stops. " +
+                "VPN + Accessibility + OCR all merge into the same stop list.",
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        Button(
             onClick = { generateFromCapture() },
             enabled = !geocoding,
             modifier = Modifier.fillMaxWidth()
@@ -415,9 +446,8 @@ fun MainScreen() {
             text = if (vpnRunning)
                 "VPN on. Open Opter in the SAME profile. Restart Opter to force list-load."
             else
-                "IMPORTANT: Extractor VPN only sees apps in the same Android profile.\n" +
-                "1. Start VPN\n2. Open/restart Opter (same profile)\n" +
-                "3. Stop VPN → check traffic log for :81\n4. Re-parse log if count is 0\n5. Generate Excel",
+                "Sources: VPN traffic · Accessibility (Opter on screen) · Share screenshot (OCR).\n" +
+                "All merge into one stop list, then Generate Excel.",
             style = MaterialTheme.typography.bodyMedium
         )
     }
