@@ -90,8 +90,6 @@ class LocalVpnService : VpnService() {
             return
         }
 
-        // Keep previously parsed stops across VPN restarts (user can Clear in UI).
-        // Always start a fresh traffic log for this session.
         try {
             FileWriter(logFile, false).use { it.write("=== Extractor Traffic Log ===\n") }
         } catch (_: Exception) {}
@@ -252,12 +250,15 @@ class LocalVpnService : VpnService() {
             FileWriter(logFile, true).use { it.append(entry) }
         } catch (_: Exception) {}
 
-        parseAndStore(data, text)
-        if (session.serverBuffer.length in 1..500_000) {
-            parseAndStoreBuffer(session.serverBuffer.toString())
-        }
-        if (session.clientBuffer.length in 1..500_000) {
-            parseAndStoreBuffer(session.clientBuffer.toString())
+        // Never block the TCP relay on parsing — Opter list-load can be large.
+        val bytesCopy = data.copyOf()
+        val textCopy = text
+        val serverSnap = if (session.serverBuffer.length in 1..500_000) session.serverBuffer.toString() else null
+        val clientSnap = if (session.clientBuffer.length in 1..500_000) session.clientBuffer.toString() else null
+        scope.launch {
+            parseAndStore(bytesCopy, textCopy)
+            if (serverSnap != null) parseAndStoreBuffer(serverSnap)
+            if (clientSnap != null) parseAndStoreBuffer(clientSnap)
         }
     }
 
