@@ -11,8 +11,8 @@ android {
         applicationId = "com.majk.extractor"
         minSdk = 26
         targetSdk = 35
-        versionCode = 19
-        versionName = "0.3.13a"
+        versionCode = 20
+        versionName = "0.3.14a"
     }
 
     buildFeatures {
@@ -53,4 +53,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     // Excel written as minimal OOXML (no Apache POI — avoids Android crashes)
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 }
