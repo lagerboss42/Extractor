@@ -14,7 +14,7 @@ object OpterHttpParser {
 
     // Free-text coordinate pattern (dot or comma decimal)
     private val COORD_PATTERN = Pattern.compile(
-        """(5[6-9][.,]\\d{4,8})\\s*[,;\\s]\\s*(1[0-9][.,]\\d{4,8})"""
+        """(5[6-9][.,]\d{4,8})\s*[,;\s]\s*(1[0-9][.,]\d{4,8})"""
     )
 
     /**
@@ -69,24 +69,24 @@ object OpterHttpParser {
     }
 
     fun containsDelMarker(payload: String): Boolean =
-        payload.contains("DEL\\t") || Regex("""(?m)^DEL[\\t ]""").containsMatchIn(payload)
+        payload.contains("DEL\t") || Regex("""(?m)^DEL[\t ]""").containsMatchIn(payload)
 
     private fun parseDelRecords(payload: String): List<Shipment> {
         val shipments = mutableListOf<Shipment>()
-        val normalized = payload.replace("\\r\\n", "\\n").replace('\\r', '\\n').replace("\\u0000", "")
+        val normalized = payload.replace("\r\n", "\n").replace('\r', '\n').replace("\u0000", "")
         val lines = mutableListOf<String>()
-        val em = Pattern.compile("""DEL\\t([^\\n]{30,})""").matcher(normalized)
-        while (em.find()) lines.add("DEL\\t" + em.group(1).trimEnd())
-        for (raw in normalized.split('\\n')) {
-            if (raw.contains("DEL\\t")) {
-                val t = "DEL\\t" + raw.substringAfter("DEL\\t").trim()
+        val em = Pattern.compile("""DEL\t([^\n]{30,})""").matcher(normalized)
+        while (em.find()) lines.add("DEL\t" + em.group(1).trimEnd())
+        for (raw in normalized.split('\n')) {
+            if (raw.contains("DEL\t")) {
+                val t = "DEL\t" + raw.substringAfter("DEL\t").trim()
                 if (t.length > 40) lines.add(t)
             }
         }
         val seenLine = mutableSetOf<String>()
         for (line in lines) {
             if (!seenLine.add(line.take(120))) continue
-            val fields = line.split("\\t")
+            val fields = line.split("\t")
             if (fields.size < 30) continue
             try {
                 val shipmentId = fields.getOrNull(8)?.trim().orEmpty()
@@ -172,9 +172,9 @@ object OpterHttpParser {
 
     private fun parseEmbeddedAddresses(payload: String): List<Shipment> {
         val shipments = mutableListOf<Shipment>()
-        val normalized = payload.replace(Regex("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]+"), "\\t")
+        val normalized = payload.replace(Regex("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]+"), "\t")
         val pattern = Pattern.compile(
-            """([A-Za-zÅÄÖåäö0-9 /&\\-.,]{4,80})\\t+([A-Za-zÅÄÖåäö0-9 ]{2,40})\\t+(\\d{0,4}[A-Za-z]?)\\t+(\\d{5})\\t+([A-Za-zÅÄÖåäö]{2,25})"""
+            """([A-Za-zÅÄÖåäö0-9 /&\\-.,]{4,80})\t+([A-Za-zÅÄÖåäö0-9 ]{2,40})\t+(\\d{0,4}[A-Za-z]?)\t+(\\d{5})\t+([A-Za-zÅÄÖåäö]{2,25})"""
         )
         val matcher = pattern.matcher(normalized)
         val seen = mutableSetOf<String>()
