@@ -45,8 +45,20 @@ fun DatabaseScreen() {
     var showRemove by remember { mutableStateOf(false) }
 
     LaunchedEffect(query, tab, revision) {
-        if (tab == 0) codes = AddressStore.searchCodes(query)
-        else visits = AddressStore.searchVisits(query)
+        val q = query.trim().lowercase()
+        if (tab == 0) {
+            codes = AddressStore.listPortkods().filter {
+                q.isEmpty() || it.address.lowercase().contains(q) ||
+                    it.zip.contains(q) || it.city.lowercase().contains(q) ||
+                    it.code.lowercase().contains(q)
+            }
+        } else {
+            visits = AddressStore.listVisits().filter {
+                q.isEmpty() || it.address.lowercase().contains(q) ||
+                    it.zip.contains(q) || it.city.lowercase().contains(q) ||
+                    it.date.contains(q)
+            }
+        }
     }
 
     Column(
@@ -153,7 +165,7 @@ fun DatabaseScreen() {
                     menuTarget = null
                 },
                 onSave = { newCode ->
-                    AddressStore.updateCode(t.entry.address, t.entry.zip, newCode)
+                    AddressStore.updatePortkod(t.entry.address, t.entry.zip, newCode)
                     showModify = false
                     menuTarget = null
                 }
@@ -191,7 +203,7 @@ fun DatabaseScreen() {
                     menuTarget = null
                 },
                 onConfirmed = {
-                    AddressStore.deleteCode(t.entry.address, t.entry.zip)
+                    AddressStore.deletePortkod(t.entry.address, t.entry.zip)
                     showRemove = false
                     menuTarget = null
                 }

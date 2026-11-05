@@ -172,6 +172,44 @@ object AddressStore {
         revision++
     }
 
+    fun updateVisit(address: String, zip: String, oldDate: String, shipments: Int, weight: Int, newDate: String) {
+        val database = db()
+        val key = addressKey(address, zip)
+        database.beginTransaction()
+        try {
+            database.delete(
+                "address_log",
+                "address_key = ? AND visit_date = ?",
+                arrayOf(key, oldDate)
+            )
+            val values = ContentValues().apply {
+                put("address_key", key)
+                put("address", address)
+                put("zip", zip)
+                put("city", "")
+                put("shipments", shipments)
+                put("total_weight", weight)
+                put("visit_date", newDate)
+            }
+            database.insertWithOnConflict("address_log", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
+        revision++
+    }
+
+    fun deleteVisit(address: String, zip: String, date: String) {
+        val database = db()
+        val key = addressKey(address, zip)
+        database.delete(
+            "address_log",
+            "address_key = ? AND visit_date = ?",
+            arrayOf(key, date)
+        )
+        revision++
+    }
+
     fun addressKey(s: Shipment): String = addressKey(s.address, s.zip)
 
     fun addressKey(address: String, zip: String): String {
