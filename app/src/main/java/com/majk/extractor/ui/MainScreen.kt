@@ -16,7 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import com.majk.extractor.accessibility.OpterAccessibilityService
 import com.majk.extractor.data.cleaner.ManifestCleaner
 import com.majk.extractor.data.db.AddressStore
 import com.majk.extractor.data.excel.ExcelGenerator
@@ -70,7 +69,7 @@ fun MainScreen() {
         stopCount = CaptureRepository.lastParseCount
     }
 
-    // Refresh count while a11y may be filling stops
+    // Refresh count while parsing may be filling stops
     LaunchedEffect(Unit) {
         while (true) {
             stopCount = CaptureRepository.lastParseCount
@@ -86,7 +85,7 @@ fun MainScreen() {
                 }
                 context.startForegroundService(intent)
                 vpnRunning = true
-                status = "VPN started – open Opter Driver"
+                status = "VPN started \u2013 open Opter Driver"
             } catch (e: Exception) {
                 status = "VPN start failed: ${e.message}"
             }
@@ -119,7 +118,7 @@ fun MainScreen() {
         context.startService(intent)
         vpnRunning = false
         stopCount = CaptureRepository.lastParseCount
-        status = "VPN stopped – $stopCount stops captured"
+        status = "VPN stopped \u2013 $stopCount stops captured"
     }
 
     fun shareFile(file: File, mimeType: String, title: String) {
@@ -153,7 +152,7 @@ fun MainScreen() {
     fun generateExcel(raw: List<Shipment>, label: String) {
         scope.launch {
             geocoding = true
-            status = "Building manifest…"
+            status = "Building manifest\u2026"
             try {
                 data class GenResult(val file: File, val message: String)
                 val result = withContext(Dispatchers.IO) {
@@ -187,7 +186,7 @@ fun MainScreen() {
                     val remembered = withPk.count { it.portkodRemembered }
                     GenResult(
                         file,
-                        "$label: ${withCoords.size} rows (${withPk.size} from Opter, $kkb kkböj, $remembered saved PK), $geoCount geocoded"
+                        "$label: ${withCoords.size} rows (${withPk.size} from Opter, $kkb kkb\u00f6j, $remembered saved PK), $geoCount geocoded"
                     )
                 }
                 lastFile = result.file
@@ -206,7 +205,7 @@ fun MainScreen() {
             try {
                 var raw = CaptureRepository.getShipments()
                 if (raw.isEmpty() && logFile.exists()) {
-                    status = "Re-parsing traffic log…"
+                    status = "Re-parsing traffic log\u2026"
                     withContext(Dispatchers.IO) {
                         CaptureRepository.reparseFromLogFile(logFile)
                     }
@@ -214,7 +213,7 @@ fun MainScreen() {
                     stopCount = CaptureRepository.lastParseCount
                 }
                 if (raw.isEmpty() && activeFixedIds.isEmpty()) {
-                    status = "No stops captured and no kkböj selected"
+                    status = "No stops captured and no kkb\u00f6j selected"
                     return@launch
                 }
                 geocoding = false
@@ -231,21 +230,21 @@ fun MainScreen() {
             Shipment(
                 type = ShipmentType.DEL,
                 recipient = "KRISTIN HALLBERG",
-                address = "VÄSTAN 10",
+                address = "V\u00c4STAN 10",
                 zip = "59175",
                 city = "BORENSBORG",
                 colliCount = 2,
                 weightKg = 19,
                 portkod = "1234ok",
-                comment = "Lämna hos grannen",
+                comment = "L\u00e4mna hos grannen",
                 carrier = "TNT Sverige AB"
             ),
             Shipment(
                 type = ShipmentType.DEL,
-                recipient = "Göran Karl Eskil Nilsson",
-                address = "FÅRFIOLSVÄGEN 4",
+                recipient = "G\u00f6ran Karl Eskil Nilsson",
+                address = "F\u00c5RFIOLSV\u00c4GEN 4",
                 zip = "58666",
-                city = "LINKÖPING",
+                city = "LINK\u00d6PING",
                 colliCount = 5,
                 weightKg = 22,
                 portkod = null,
@@ -291,29 +290,7 @@ fun MainScreen() {
         }
 
         Text(
-            text = if (vpnRunning) "VPN: running · stops: $stopCount" else "VPN: stopped · last stops: $stopCount",
-            style = MaterialTheme.typography.bodySmall
-        )
-
-        Button(
-            onClick = { OpterAccessibilityService.openSettings(context) },
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                contentColor = MaterialTheme.colorScheme.onSurface
-            )
-        ) {
-            Text(
-                if (OpterAccessibilityService.isRunning)
-                    "Accessibility: ON (tap to open settings)"
-                else
-                    "Enable Accessibility for Opter"
-            )
-        }
-
-        Text(
-            text = "Share an Opter stop-list screenshot to Extractor to OCR-import stops. " +
-                "VPN + Accessibility + OCR all merge into the same stop list.",
+            text = if (vpnRunning) "VPN: running \u00b7 stops: $stopCount" else "VPN: stopped \u00b7 last stops: $stopCount",
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -338,16 +315,16 @@ fun MainScreen() {
         Button(
             onClick = {
                 scope.launch {
-                    status = "Re-parsing traffic log…"
+                    status = "Re-parsing traffic log\u2026"
                     try {
                         val n = withContext(Dispatchers.IO) {
                             CaptureRepository.reparseFromLogFile(logFile)
                         }
                         stopCount = n
                         status = when {
-                            n > 0 -> "Re-parsed log → $n stops"
+                            n > 0 -> "Re-parsed log \u2192 $n stops"
                             !logFile.exists() || logFile.length() == 0L -> "No traffic log to re-parse"
-                            else -> "Re-parsed log → 0 stops (no DEL/list rows the parser accepts)"
+                            else -> "Re-parsed log \u2192 0 stops (no DEL/list rows the parser accepts)"
                         }
                     } catch (e: Exception) {
                         status = "Re-parse failed: ${e.javaClass.simpleName}: ${e.message}"
@@ -377,9 +354,9 @@ fun MainScreen() {
 
         HorizontalDivider()
 
-        Text("Kkböj (tap to include)", style = MaterialTheme.typography.titleMedium)
+        Text("Kkb\u00f6j (tap to include)", style = MaterialTheme.typography.titleMedium)
         Text(
-            "${activeFixedIds.size} selected · Info = kkböj",
+            "${activeFixedIds.size} selected \u00b7 Info = kkb\u00f6j",
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -416,21 +393,21 @@ fun MainScreen() {
         }
 
         TextButton(onClick = { showLmSettings = !showLmSettings }) {
-            Text(if (showLmSettings) "Hide Lantmäteriet settings" else "Lantmäteriet API (optional)")
+            Text(if (showLmSettings) "Hide Lantm\u00e4teriet settings" else "Lantm\u00e4teriet API (optional)")
         }
 
         if (showLmSettings) {
             OutlinedTextField(
                 value = lmUser,
                 onValueChange = { lmUser = it },
-                label = { Text("Lantmäteriet user") },
+                label = { Text("Lantm\u00e4teriet user") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
             OutlinedTextField(
                 value = lmPass,
                 onValueChange = { lmPass = it },
-                label = { Text("Lantmäteriet password") },
+                label = { Text("Lantm\u00e4teriet password") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -446,8 +423,7 @@ fun MainScreen() {
             text = if (vpnRunning)
                 "VPN on. Open Opter in the SAME profile. Restart Opter to force list-load."
             else
-                "Sources: VPN traffic · Accessibility (Opter on screen) · Share screenshot (OCR).\n" +
-                "All merge into one stop list, then Generate Excel.",
+                "Sources: VPN traffic. Share a screenshot as fallback if needed.",
             style = MaterialTheme.typography.bodyMedium
         )
     }
