@@ -2,8 +2,10 @@ package com.majk.extractor
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
-import android.widget.Toast
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -18,28 +20,23 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.lifecycleScope
 import com.majk.extractor.data.db.AddressStore
-import com.majk.extractor.importing.ImageOcrImporter
+import com.majk.extractor.vpn.CaptureRepository
 import com.majk.extractor.ui.DatabaseScreen
 import com.majk.extractor.ui.MainScreen
 import com.majk.extractor.ui.theme.ExtractorTheme
-import com.majk.extractor.vpn.CaptureRepository
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AddressStore.init(this)
         CaptureRepository.init(this)
+        maybeRequestAllFilesAccess()
         try {
             enableEdgeToEdge()
         } catch (_: Exception) {
@@ -58,86 +55,47 @@ class MainActivity : ComponentActivity() {
                             selectedTabIndex = tab,
                             modifier = Modifier.fillMaxWidth(),
                             containerColor = MaterialTheme.colorScheme.surface,
-                            contentColor = MaterialTheme.colorScheme.primary,
-                            indicator = { positions ->
-                                if (tab < positions.size) {
-                                    TabRowDefaults.SecondaryIndicator(
-                                        Modifier.tabIndicatorOffset(positions[tab]),
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                            indicator = { tabPositions ->
+                                TabRowDefaults.Indicator(
+                                    Modifier.tabIndicatorOffset(tabPositions[tab]),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                             }
                         ) {
                             Tab(
                                 selected = tab == 0,
                                 onClick = { tab = 0 },
-                                text = {
-                                    Text(
-                                        "Manifest",
-                                        color = if (tab == 0) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
+                                text = { Text("Capture") }
                             )
                             Tab(
                                 selected = tab == 1,
                                 onClick = { tab = 1 },
-                                text = {
-                                    Text(
-                                        "Database",
-                                        color = if (tab == 1) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
+                                text = { Text("Database") }
                             )
                         }
-                        if (tab == 0) MainScreen() else DatabaseScreen()
+                        when (tab) {
+                            0 -> MainScreen()
+                            1 -> DatabaseScreen()
+                        }
                     }
                 }
             }
         }
-        handleShareIntent(intent)
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleShareIntent(intent)
-    }
-
-    private fun handleShareIntent(intent: Intent?) {
-        if (intent == null) return
-        if (intent.action != Intent.ACTION_SEND) return
-        val type = intent.type ?: return
-        if (!type.startsWith("image/")) return
-        @Suppress("DEPRECATION")
-        val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) ?: return
-        lifecycleScope.launch {
-            try {
-                val found = withContext(Dispatchers.IO) {
-                    ImageOcrImporter.importUri(this@MainActivity, uri)
-                }
-                if (found.isEmpty()) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "OCR found no Opter stops in image",
-                        Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    CaptureRepository.mergeEnrich(found)
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Imported ${found.size} stops from image (total ${CaptureRepository.lastParseCount})",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(
-                    this@MainActivity,
-                    "OCR failed: ${e.message}",
-                    Toast.LENGTH_LONG
-                ).show()
+    private fun maybeRequestAllFilesAccess() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        if (Environment.isExternalStorageManager()) return
+        try {
+            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                data = Uri.parse("package:$packageName")
             }
+            startActivity(intent)
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+            } catch (_: Exception) {}
         }
     }
 }
