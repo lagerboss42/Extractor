@@ -173,8 +173,9 @@ object OpterHttpParser {
     private fun parseEmbeddedAddresses(payload: String): List<Shipment> {
         val shipments = mutableListOf<Shipment>()
         val normalized = payload.replace(Regex("[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]+"), "\t")
+        // Hyphen at end of class so it is literal, not a range
         val pattern = Pattern.compile(
-            """([A-Za-zÅÄÖåäö0-9 /&\\-.,]{4,80})\t+([A-Za-zÅÄÖåäö0-9 ]{2,40})\t+(\\d{0,4}[A-Za-z]?)\t+(\\d{5})\t+([A-Za-zÅÄÖåäö]{2,25})"""
+            """([A-Za-zÅÄÖåäö0-9 /&.,-]{4,80})\t+([A-Za-zÅÄÖåäö0-9 ]{2,40})\t+(\\d{0,4}[A-Za-z]?)\t+(\\d{5})\t+([A-Za-zÅÄÖåäö]{2,25})"""
         )
         val matcher = pattern.matcher(normalized)
         val seen = mutableSetOf<String>()
