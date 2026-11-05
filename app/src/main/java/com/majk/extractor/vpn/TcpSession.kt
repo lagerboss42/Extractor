@@ -21,7 +21,8 @@ class TcpSession(
     private val serverPort: Int,
     private val clientIsn: Long,
     private val writeToTun: (ByteArray) -> Unit,
-    private val onStreamData: (session: TcpSession, data: ByteArray, fromClient: Boolean) -> Unit
+    private val onStreamData: (session: TcpSession, data: ByteArray, fromClient: Boolean) -> Unit,
+    private val onClosed: (String) -> Unit
 ) {
     private val tag = "TcpSession"
     private var socket: Socket? = null
@@ -53,10 +54,10 @@ class TcpSession(
             val s = Socket()
             vpn.protect(s)
             s.tcpNoDelay = true
-            s.soTimeout = 0
+            s.soTimeout = 30_000
             s.connect(
                 InetSocketAddress(PacketUtils.ipToString(serverIp, 0), serverPort),
-                12_000
+                10_000
             )
             socket = s
             out = s.getOutputStream()
@@ -129,6 +130,7 @@ class TcpSession(
             )
             writeToTun(finAck)
             serverSeq = (serverSeq + 1) and 0xFFFFFFFFL
+            // Don't close immediately - let remote side finish and close
         }
     }
 
@@ -194,5 +196,6 @@ class TcpSession(
             socket?.close()
         } catch (_: Exception) {}
         socket = null
+        onClosed(key)
     }
 }
