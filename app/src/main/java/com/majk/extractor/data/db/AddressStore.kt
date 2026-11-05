@@ -29,7 +29,11 @@ data class VisitEntry(
 /**
  * Persistent port codes and per-address visit log.
  * Same calendar day is overwritten (regenerating Excel does not double-count).
- * Database lives at /storage/emulated/0/extractor/extractor.db
+ *
+ * Database path priority:
+ *   1. /storage/emulated/0/extractor/extractor.db
+ *   2. app-private external files dir
+ *   3. internal databases dir
  */
 object AddressStore {
 
@@ -160,15 +164,6 @@ object AddressStore {
         val key = addressKey(address, zip)
         database.beginTransaction()
         try {
-            val cur = database.rawQuery(
-                "SELECT address, zip, city FROM pk_codes WHERE address_key = ?",
-                arrayOf(key)
-            )
-            var addr = address; var z = zip; var city = ""
-            if (cur.moveToFirst()) {
-                addr = cur.getString(0); z = cur.getString(1) ?: ""; city = cur.getString(2) ?: ""
-            }
-            cur.close()
             database.delete("pk_codes", "address_key = ?", arrayOf(key))
             database.setTransactionSuccessful()
         } finally {
@@ -194,9 +189,27 @@ object AddressStore {
     private class Helper(context: Context) : SQLiteOpenHelper(context, dbPath(context), null, 1) {
         companion object {
             private fun dbPath(context: Context): String {
-                val dir = File(Environment.getExternalStorageDirectory(), "extractor")
-                if (!dir.exists()) dir.mkdirs()
-                return File(dir, "extractor.db").absolutePath
+                // Prefer external: /storage/emulated/0/extractor/extractor.db
+                runCatching {
+                    val dir = File(Environment.getExternalStorageDirectory(), "extractor")
+                    if (!dir.exists()) dir.mkdirs()
+                    if (dir.exists() && dir.canWrite()) {
+                        return File(dir, "extractor.db").absolutePath
+                    }
+                }
+                // Fallback to app-private external files dir
+                runCatching {
+                    val dir = context.getExternalFilesDir(null)
+                    if (dir != null) {
+                        val sub = File(dir, "extractor")
+                        if (!sub.exists()) sub.mkdirs()
+                        if (sub.exists() && sub.canWrite()) {
+                            return File(sub, "extractor.db").absolutePath
+                        }
+                    }
+                }
+                // Last resort: internal databases dir
+                return context.getDatabasePath("extractor.db").absolutePath
             }
         }
         override fun onCreate(db: SQLiteDatabase) {
