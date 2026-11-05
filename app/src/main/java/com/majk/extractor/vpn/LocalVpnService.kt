@@ -25,6 +25,12 @@ import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * Local VPN with userspace TCP relay:
+ *  - Apps talk to the TUN as if talking to the internet
+ *  - We open protected sockets to the real hosts and inject replies into the TUN
+ *  - TCP port 81 payloads are logged and parsed (Opter Driver)
+ */
 class LocalVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
@@ -90,13 +96,15 @@ class LocalVpnService : VpnService() {
             return
         }
 
+        // Keep previously parsed stops across VPN restarts (user can Clear in UI).
+        // Always start a fresh traffic log for this session.
         try {
             FileWriter(logFile, false).use { it.write("=== Extractor Traffic Log ===\n") }
         } catch (_: Exception) {}
 
         capturing.set(true)
         VpnStatus.isRunning = true
-        startForeground(NOTIFICATION_ID, createNotification("Capturing… ${CaptureRepository.lastParseCount} stops"))
+        startForeground(NOTIFICATION_ID, createNotification("Capturing… 0 stops"))
 
         captureJob = scope.launch {
             runCaptureLoop(vpnInterface!!)
@@ -196,7 +204,8 @@ class LocalVpnService : VpnService() {
                 serverPort = dstPort,
                 clientIsn = seq,
                 writeToTun = { writeToTun(it) },
-                onStreamData = { sess, data, fromClient -> onStreamData(sess, data, fromClient) }
+                onStreamData = { sess, data, fromClient -> onStreamData(sess, data, fromClient) },
+                onClosed = { closedKey -> sessions.remove(closedKey) }
             )
             sessions[key] = session
             session.acceptSyn()
@@ -250,45 +259,28 @@ class LocalVpnService : VpnService() {
             FileWriter(logFile, true).use { it.append(entry) }
         } catch (_: Exception) {}
 
-        // Never block the TCP relay on parsing — Opter list-load can be large.
-        val bytesCopy = data.copyOf()
-        val textCopy = text
-        val serverSnap = if (session.serverBuffer.length in 1..500_000) session.serverBuffer.toString() else null
-        val clientSnap = if (session.clientBuffer.length in 1..500_000) session.clientBuffer.toString() else null
-        scope.launch {
-            parseAndStore(bytesCopy, textCopy)
-            if (serverSnap != null) parseAndStoreBuffer(serverSnap)
-            if (clientSnap != null) parseAndStoreBuffer(clientSnap)
+        parseAndStore(text)
+        if (session.serverBuffer.length in 1..500_000) {
+            parseAndStore(session.serverBuffer.toString())
+        }
+        if (session.clientBuffer.length in 1..500_000) {
+            parseAndStore(session.clientBuffer.toString())
         }
     }
 
-    private fun parseAndStore(rawBytes: ByteArray, fallbackText: String) {
-        if (rawBytes.isEmpty()) return
-        try {
-            val found = OpterHttpParser.parse(rawBytes)
-            if (found.isNotEmpty()) {
-                CaptureRepository.addAll(found)
-                updateNotification()
-                Log.i(TAG, "Parsed ${found.size} stops via ByteArray (total ${CaptureRepository.lastParseCount})")
-            } else if (OpterHttpParser.containsDelMarker(fallbackText)) {
-                Log.w(TAG, "DEL marker present but parser returned 0 shipments via ByteArray")
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Parse ByteArray: ${e.message}")
-        }
-    }
-
-    private fun parseAndStoreBuffer(text: String) {
+    private fun parseAndStore(text: String) {
         if (text.isBlank()) return
         try {
             val found = OpterHttpParser.parse(text)
             if (found.isNotEmpty()) {
                 CaptureRepository.addAll(found)
                 updateNotification()
-                Log.i(TAG, "Parsed ${found.size} stops via StringBuffer (total ${CaptureRepository.lastParseCount})")
+                Log.i(TAG, "Parsed ${found.size} stops (total ${CaptureRepository.lastParseCount})")
+            } else if (OpterHttpParser.containsDelMarker(text)) {
+                Log.w(TAG, "DEL marker present but parser returned 0 shipments (len=${text.length})")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Parse StringBuffer: ${e.message}")
+            Log.w(TAG, "Parse: ${e.message}")
         }
     }
 
