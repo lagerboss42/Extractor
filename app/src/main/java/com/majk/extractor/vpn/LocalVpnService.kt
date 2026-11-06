@@ -81,10 +81,9 @@ class LocalVpnService : VpnService() {
             }
         }
         if (!restricted) {
-            Log.w(TAG, "Opter package not found – full-tunnel capture")
-            try {
-                builder.addDisallowedApplication(packageName)
-            } catch (_: Exception) {}
+            Log.e(TAG, "Opter package not found – refusing full tunnel")
+            stopSelf()
+            return
         }
 
         try {
