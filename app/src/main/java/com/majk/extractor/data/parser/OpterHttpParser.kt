@@ -12,31 +12,62 @@ object OpterHttpParser {
     private val TERMINAL_STREETS = listOf("kopetorpsgatan", "kromgatan")
     private val TERMINAL_NAMES = listOf("alltransport")
 
+    /**
+     * DEL column indices. Wire format is positional (tab-separated), matching
+     * Opter Shipment fields: package identity, recipient, status, weight, colli.
+     * Centralized so a schema change is one edit, not scattered magic numbers.
+     */
+    private object DelCol {
+        const val PACKAGE_ID_A = 5
+        const val PACKAGE_ID_B = 7
+        const val PACKAGE_ID_C = 9
+        const val SHIPMENT_ID = 8
+        const val RECIPIENT_NAME = 10
+        const val RECIPIENT_CITY = 11
+        const val SENDER_NAME = 12
+        const val SENDER_CITY = 13
+        const val STATUS = 16
+        const val SENDER_STREET = 21
+        const val SENDER_NUMBER = 22
+        const val SENDER_ZIP = 23
+        const val RECIPIENT_STREET = 26
+        const val RECIPIENT_NUMBER = 27
+        const val RECIPIENT_ZIP = 28
+        const val CARRIER = 33
+        const val WEIGHT_A = 39
+        const val WEIGHT_B = 40
+        const val COLLI = 45
+        const val TIME_A = 49
+        const val TIME_B = 58
+    }
+
     fun parse(payload: String): List<Shipment> {
         val del = parseDelRecords(payload)
         val embedded = parseEmbeddedAddresses(payload)
         val binary = OpterBinaryParser.parse(payload)
-        // Completeness: keep every unique package identity. Prefer DEL (has weight/colli/packageId).
-        // Add embedded/binary only when no matching packageId or strong address key already exists.
-        val byPackage = mutableMapOf<String, Shipment>()
-        val byAddress = mutableSetOf<String>()
-        fun keyOf(s: Shipment) = "${s.type}|${s.zip}|${s.address.lowercase()}|${s.recipient.lowercase()}"
-        for (s in del) {
-            val id = s.rawId
-            if (!id.isNullOrBlank()) byPackage[id] = s
-            byAddress.add(keyOf(s))
-        }
-        val extras = (embedded + binary).filter { s ->
-            val id = s.rawId
-            if (!id.isNullOrBlank() && id in byPackage) return@filter false
-            // Reject junk names/cities that the binary parser sometimes emits.
+
+        // Prefer DEL. Binary/embedded are fallback only.
+        // If DEL produced results, only add extras that carry a package ID we don't already have.
+        // If DEL produced nothing, fall back to binary/embedded (junk-filtered).
+        fun isJunk(s: Shipment): Boolean {
             val name = s.recipient.trim()
             val city = s.city.trim()
-            if (name.all { it.isDigit() } || name.equals("true", true) || name.equals("false", true)) return@filter false
-            if (city.equals("true", true) || city.equals("false", true) || city.all { it.isDigit() }) return@filter false
-            keyOf(s) !in byAddress
+            // Empty is not junk — Region rows can have a blank name after cleaning.
+            // all {} on empty is true in Kotlin, so require non-empty first.
+            if (name.isNotEmpty() && (name.all { it.isDigit() } || name.equals("true", true) || name.equals("false", true))) return true
+            if (city.isNotEmpty() && (city.equals("true", true) || city.equals("false", true) || city.all { it.isDigit() })) return true
+            return false
         }
-        return del + extras
+        if (del.isNotEmpty()) {
+            val seenIds = del.mapNotNull { it.rawId }.filter { it.isNotBlank() }.toSet()
+            val extras = (embedded + binary).filter { s ->
+                if (isJunk(s)) return@filter false
+                val id = s.rawId
+                !id.isNullOrBlank() && id !in seenIds
+            }
+            return del + extras
+        }
+        return (embedded + binary).filter { !isJunk(it) }
     }
 
     fun containsDelMarker(payload: String): Boolean =
@@ -56,35 +87,33 @@ object OpterHttpParser {
         for (line in lines) {
             // Include package-level ID in the dedupe key so distinct colli are never dropped.
             val fields = line.split("\t")
-            val pkgKey = fields.getOrNull(5)?.trim().orEmpty()
-                .ifBlank { fields.getOrNull(7)?.trim().orEmpty() }
-                .ifBlank { fields.getOrNull(9)?.trim().orEmpty() }
+            val pkgKey = fields.getOrNull(DelCol.PACKAGE_ID_A)?.trim().orEmpty()
+                .ifBlank { fields.getOrNull(DelCol.PACKAGE_ID_B)?.trim().orEmpty() }
+                .ifBlank { fields.getOrNull(DelCol.PACKAGE_ID_C)?.trim().orEmpty() }
             val lineKey = if (pkgKey.isNotBlank()) "$pkgKey|${line.take(80)}" else line.take(120)
             if (!seenLine.add(lineKey)) continue
             if (fields.size < 30) continue
             try {
-                val shipmentId = fields.getOrNull(8)?.trim().orEmpty()
-                // Package/colli-level IDs — different values mean distinct colli even if address matches.
-                val packageId = fields.getOrNull(5)?.trim().orEmpty()
-                    .ifBlank { fields.getOrNull(7)?.trim().orEmpty() }
-                    .ifBlank { fields.getOrNull(9)?.trim().orEmpty() }
-                val recipientName = TextEncoding.fixSwedish(fields.getOrNull(10)?.trim().orEmpty())
-                val recipientCity = TextEncoding.fixSwedish(fields.getOrNull(11)?.trim().orEmpty())
-                val senderName = TextEncoding.fixSwedish(fields.getOrNull(12)?.trim().orEmpty())
-                val senderCity = TextEncoding.fixSwedish(fields.getOrNull(13)?.trim().orEmpty())
-                val senderStreet = TextEncoding.fixSwedish(fields.getOrNull(21)?.trim().orEmpty())
-                val senderNumber = fields.getOrNull(22)?.trim().orEmpty()
-                val senderZip = fields.getOrNull(23)?.trim()?.filter { it.isDigit() }?.take(5).orEmpty()
-                val recipientStreet = TextEncoding.fixSwedish(fields.getOrNull(26)?.trim().orEmpty())
-                val recipientNumber = fields.getOrNull(27)?.trim().orEmpty()
-                val recipientZip = fields.getOrNull(28)?.trim()?.filter { it.isDigit() }?.take(5).orEmpty()
-                val carrierRaw = TextEncoding.fixSwedish(fields.getOrNull(33)?.trim().orEmpty())
-                val weightRaw = fields.getOrNull(40)?.trim().orEmpty()
-                    .ifBlank { fields.getOrNull(39)?.trim().orEmpty() }
-                val colliRaw = fields.getOrNull(45)?.trim().orEmpty()
+                val shipmentId = fields.getOrNull(DelCol.SHIPMENT_ID)?.trim().orEmpty()
+                val packageId = fields.getOrNull(DelCol.PACKAGE_ID_A)?.trim().orEmpty()
+                    .ifBlank { fields.getOrNull(DelCol.PACKAGE_ID_B)?.trim().orEmpty() }
+                    .ifBlank { fields.getOrNull(DelCol.PACKAGE_ID_C)?.trim().orEmpty() }
+                val recipientName = TextEncoding.fixSwedish(fields.getOrNull(DelCol.RECIPIENT_NAME)?.trim().orEmpty())
+                val recipientCity = TextEncoding.fixSwedish(fields.getOrNull(DelCol.RECIPIENT_CITY)?.trim().orEmpty())
+                val senderName = TextEncoding.fixSwedish(fields.getOrNull(DelCol.SENDER_NAME)?.trim().orEmpty())
+                val senderCity = TextEncoding.fixSwedish(fields.getOrNull(DelCol.SENDER_CITY)?.trim().orEmpty())
+                val senderStreet = TextEncoding.fixSwedish(fields.getOrNull(DelCol.SENDER_STREET)?.trim().orEmpty())
+                val senderNumber = fields.getOrNull(DelCol.SENDER_NUMBER)?.trim().orEmpty()
+                val senderZip = fields.getOrNull(DelCol.SENDER_ZIP)?.trim()?.filter { it.isDigit() }?.take(5).orEmpty()
+                val recipientStreet = TextEncoding.fixSwedish(fields.getOrNull(DelCol.RECIPIENT_STREET)?.trim().orEmpty())
+                val recipientNumber = fields.getOrNull(DelCol.RECIPIENT_NUMBER)?.trim().orEmpty()
+                val recipientZip = fields.getOrNull(DelCol.RECIPIENT_ZIP)?.trim()?.filter { it.isDigit() }?.take(5).orEmpty()
+                val carrierRaw = TextEncoding.fixSwedish(fields.getOrNull(DelCol.CARRIER)?.trim().orEmpty())
+                val weightRaw = fields.getOrNull(DelCol.WEIGHT_B)?.trim().orEmpty()
+                    .ifBlank { fields.getOrNull(DelCol.WEIGHT_A)?.trim().orEmpty() }
+                val colliRaw = fields.getOrNull(DelCol.COLLI)?.trim().orEmpty()
 
-                // Skip failed delivery attempts. ONLY signal is status or DEX code — never city.
-                val statusField = fields.getOrNull(16)?.trim().orEmpty().lowercase()
+                val statusField = fields.getOrNull(DelCol.STATUS)?.trim().orEmpty().lowercase()
                 val nearbyText = fields.drop(10).take(40).joinToString(" ").lowercase()
                 val isFailed = statusField.contains("nekad") ||
                     nearbyText.contains("dex07") || nearbyText.contains("dex08") || nearbyText.contains("dex17") ||
@@ -121,7 +150,10 @@ object OpterHttpParser {
                 val colli = colliRaw.toIntOrNull()?.coerceAtLeast(0) ?: 1
                 val weight = parseWeight(weightRaw)
                 val carrier = CarrierNames.shorten(carrierRaw)
-                val (earliestMin, latestMin) = parseDelTimeWindow(fields.getOrNull(49), fields.getOrNull(58))
+                val (earliestMin, latestMin) = parseDelTimeWindow(
+                    fields.getOrNull(DelCol.TIME_A),
+                    fields.getOrNull(DelCol.TIME_B)
+                )
 
                 shipments.add(
                     Shipment(
