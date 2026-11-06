@@ -80,32 +80,24 @@ object OpterBinaryParser {
     }
 
     fun parse(payload: String): List<Shipment> {
-        if (payload.length < 40) return emptyList()
-        val data = payload.toByteArray(Charsets.ISO_8859_1)
-        return parse(data)
+        return parse(payload.toByteArray(Charsets.ISO_8859_1))
     }
 
     private fun extractTlvs(data: ByteArray): List<Tlv> {
         val out = mutableListOf<Tlv>()
         var i = 0
-        while (i < data.size - 4) {
+        while (i + 4 < data.size) {
             if (data[i] == 0x04.toByte()) {
                 val id = data[i + 1].toInt() and 0xFF
                 val len = (data[i + 2].toInt() and 0xFF) or ((data[i + 3].toInt() and 0xFF) shl 8)
-                if (len in 1..2000 && i + 4 + len <= data.size) {
+                if (len in 1..200 && i + 4 + len <= data.size) {
                     val slice = data.copyOfRange(i + 4, i + 4 + len)
-                    val bad = slice.count { b ->
-                        val v = b.toInt() and 0xFF
-                        v < 9 || v in 14..31
+                    val value = decodeTlvString(slice)
+                    if (value.isNotBlank()) {
+                        out.add(Tlv(i, id, value))
                     }
-                    if (bad <= len / 3) {
-                        val value = decodeTlvString(slice)
-                        if (value.isNotBlank()) {
-                            out.add(Tlv(i, id, value))
-                        }
-                        i += 4 + len
-                        continue
-                    }
+                    i += 4 + len
+                    continue
                 }
             }
             i++
@@ -155,6 +147,16 @@ object OpterBinaryParser {
             }
             val zipClean = zip.filter { it.isDigit() }.take(5)
             val cityClean = city.trim()
+            val nameClean = name.trim()
+            // Reject junk: numeric "names" (zip misread), boolean cities, empty street.
+            if (nameClean.all { it.isDigit() } || nameClean.equals("true", true) || nameClean.equals("false", true)) {
+                i++
+                continue
+            }
+            if (cityClean.equals("true", true) || cityClean.equals("false", true) || cityClean.all { it.isDigit() }) {
+                i++
+                continue
+            }
             if (zipClean.length == 5 && f.value.length >= 3) {
                 result.add(
                     Addr(
@@ -172,13 +174,6 @@ object OpterBinaryParser {
         return result
     }
 
-    /**
-     * Scan all string fields for coordinate patterns and attach to the nearest address
-     * by byte offset. Handles formats like:
-     *   "58.544853, 15.633303"
-     *   "58,544853 15,633303"
-     *   "58.544853; 15.633303"
-     */
     private fun attachFreeTextCoords(fields: List<Tlv>, addrs: List<Addr>) {
         if (addrs.isEmpty()) return
         for (f in fields) {
@@ -188,9 +183,7 @@ object OpterBinaryParser {
             val lonStr = m.group(2).replace(',', '.')
             val lat = latStr.toDoubleOrNull() ?: continue
             val lon = lonStr.toDoubleOrNull() ?: continue
-            // Skip terminal cluster (device position updates)
             if (lat in 58.414..58.416 && lon in 15.662..15.664) continue
-            // Attach to nearest address by offset
             val nearest = addrs.minByOrNull { kotlin.math.abs(it.offset - f.offset) } ?: continue
             if (nearest.lat == null) {
                 nearest.lat = lat
@@ -199,25 +192,18 @@ object OpterBinaryParser {
         }
     }
 
-    /**
-     * Look for colli/weight/carrier in nearby string fields.
-     * Carrier names appear as free text; colli/weight may be in decimal or string form.
-     */
     private fun attachColliWeightCarrier(fields: List<Tlv>, addrs: List<Addr>) {
         if (addrs.isEmpty()) return
         for (a in addrs) {
-            // Look within ~500 bytes for relevant fields
-            val nearby = fields.filter { kotlin.math.abs(it.offset - a.offset) < 800 }
+            val nearby = fields.filter { kotlin.math.abs(it.offset - a.offset) < 1200 }
             for (f in nearby) {
                 val v = f.value
-                // Carrier detection
                 if (a.carrier.isEmpty()) {
                     val shortened = CarrierNames.shorten(v)
                     if (shortened.isNotBlank() && shortened != v.trim() && shortened.length < 20) {
                         a.carrier = shortened
                     }
                 }
-                // Colli: look for small integers near "kli" or standalone small numbers
                 if (a.colli == 0) {
                     val colliMatch = Regex("""(\d{1,3})\s*(?:kli|colli|st|pcs)""", RegexOption.IGNORE_CASE)
                         .find(v)
@@ -225,7 +211,6 @@ object OpterBinaryParser {
                         a.colli = colliMatch.groupValues[1].toIntOrNull() ?: 0
                     }
                 }
-                // Weight: look for decimal kg patterns
                 if (a.weight == 0) {
                     val weightMatch = Regex("""(\d+[.,]\d{1,3})\s*kg""", RegexOption.IGNORE_CASE)
                         .find(v)
@@ -234,7 +219,6 @@ object OpterBinaryParser {
                         if (w != null && w > 0) a.weight = kotlin.math.ceil(w).toInt()
                     }
                 }
-                // Free-text comment (exclude if it only contains coords)
                 if (a.comment == null && v.length in 5..120 && !COORD_PATTERN.matcher(v).find()) {
                     if (v.any { it.isLetter() } && !v.startsWith("1-") && !v.all { it.isDigit() }) {
                         a.comment = v
