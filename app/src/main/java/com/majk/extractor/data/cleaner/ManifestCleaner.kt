@@ -9,7 +9,7 @@ import com.majk.extractor.util.WeightUtils
 object ManifestCleaner {
 
     private val PORT_K_KEYWORDS = listOf(
-        "PORT K", "GATE K", "PORK K"
+        "BT", "TMH", "TMHS", "PORT K", "GATE K", "TOYOTA", "MATERIAL HANDLING", "HALLEVAD"
     )
 
     private val PORT_K_EXCLUDE = listOf("PORT F", "GATE F", "TRUCKHUSET")
@@ -35,26 +35,18 @@ object ManifestCleaner {
     private const val PORT_D_CITY = "Mjölby"
     private const val PORT_D_ADDRESS = "8496+2RC Mjölby"
 
+    /** Delivery / godsmottagning site. */
     private const val CLOETTA_DEL_RECIPIENT = "Cloetta Godsmottagning"
     private const val CLOETTA_DEL_ADDRESS = "GG72+6F Ljungsbro"
+    /** Pickup site (not the same as godsmottagning). */
     private const val CLOETTA_PICK_RECIPIENT = "Cloetta"
     private const val CLOETTA_PICK_ADDRESS = "GF7X+3V Ljungsbro"
     private const val CLOETTA_ZIP = "58580"
     private const val CLOETTA_CITY = "Ljungsbro"
 
     fun cleanAndConsolidate(raw: List<Shipment>): List<Shipment> {
-        val cleaned = raw
-            .map { cleanSingle(it) }
-            .filter { !isTerminalAddress(it) }
+        val cleaned = raw.map { cleanSingle(it) }
         return consolidate(cleaned)
-    }
-
-    /** Alltransport terminal must never appear as a customer stop. */
-    private fun isTerminalAddress(s: Shipment): Boolean {
-        val n = normalizeAscii("${s.address} ${s.recipient} ${s.sender.orEmpty()}")
-        val zip = s.zip.filter { it.isDigit() }
-        return "KOPETORPSGATAN" in n ||
-            (zip == "58278" && ("ALLTRANSPORT" in n || "KOPETORP" in n))
     }
 
     private fun cleanSingle(s: Shipment): Shipment {
@@ -62,6 +54,7 @@ object ManifestCleaner {
         val comment = s.comment?.trim()?.takeIf { it.isNotEmpty() }
         val found = s.lat?.let { la -> s.lon?.let { lo -> AddressUtils.Coords(la, lo) } }
             ?: AddressUtils.extractCoords(spaced, comment, s.recipient)
+        // Prefer coordinates over street address when present (including writing into Address field).
         val address = if (found != null) found.format() else spaced
         return s.copy(
             recipient = companyOnly(s.recipient),
@@ -77,6 +70,7 @@ object ManifestCleaner {
         )
     }
 
+    /** Company / site name only; strip slash-suffix and drop duplicate name halves. */
     private fun companyOnly(name: String): String {
         var trimmed = name.trim().replace(Regex("\\s+"), " ")
         if (trimmed.isEmpty()) return trimmed
@@ -120,9 +114,11 @@ object ManifestCleaner {
         }
 
         val result = mutableListOf<Shipment>()
+        // Same-type only: never merge pickups with deliveries at a fixed site.
         addFixedByType(result, portK, PORT_K_RECIPIENT, PORT_K_ADDRESS, PORT_K_ZIP, PORT_K_CITY)
         addFixedByType(result, portF, PORT_F_RECIPIENT, PORT_F_ADDRESS, PORT_F_ZIP, PORT_F_CITY)
         addFixedByType(result, portD, PORT_D_RECIPIENT, PORT_D_ADDRESS, PORT_D_ZIP, PORT_D_CITY)
+        // Cloetta pickup vs godsmottagning are different places + different recipient labels.
         val cloettaPick = cloetta.filter { it.type == ShipmentType.PICK }
         val cloettaDel = cloetta.filter { it.type != ShipmentType.PICK }
         if (cloettaPick.isNotEmpty()) {
@@ -176,14 +172,10 @@ object ManifestCleaner {
     private fun isPortK(s: Shipment): Boolean {
         if (!isMjolby(s)) return false
         if (isPortF(s) || isPortD(s)) return false
-        if (isTruckgatan2(s)) return false
         val h = haystack(s)
-        val n = normalizeAscii(h)
-        if (PORT_K_EXCLUDE.any { normalizeAscii(it) in n }) return false
-        if (PORT_K_KEYWORDS.any { normalizeAscii(it) in n }) return true
-        if (("TMH" in n || "TMHS" in n) && "HALLEVAD" in n) return true
-        if ("TOYOTA" in n && "HALLEVAD" in n && ("PORT" in n || "GATE" in n || "PORK" in n)) return true
-        return false
+        if (PORT_K_EXCLUDE.any { normalizeAscii(it) in h }) return false
+        if (isTruckgatan2(s)) return false
+        return PORT_K_KEYWORDS.any { normalizeAscii(it) in h }
     }
 
     private fun isCloetta(s: Shipment): Boolean {
@@ -220,6 +212,10 @@ object ManifestCleaner {
         if (dels.isNotEmpty()) result.add(mergeFixedPort(dels, recipient, address, zip, city))
     }
 
+    /**
+     * Fixed-site merge. [address] is a plus code + city (e.g. "8493+J2P Mjölby").
+     * Caller must pass a same-type group only (pickups or deliveries, never mixed).
+     */
     private fun mergeFixedPort(
         group: List<Shipment>,
         recipient: String,
@@ -300,7 +296,8 @@ object ManifestCleaner {
             earliestMinutes = group.mapNotNull { it.earliestMinutes }.minOrNull()
                 ?: first.earliestMinutes,
             latestMinutes = group.mapNotNull { it.latestMinutes }.maxOrNull()
-                ?: first.latestMinutes
+                ?: first.latestMinutes,
+            consolidated = first.carrier.contains("Region", ignoreCase = true)
         )
     }
 
