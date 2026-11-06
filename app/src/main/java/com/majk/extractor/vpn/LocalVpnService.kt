@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Local VPN with userspace TCP relay:
  *  - Apps talk to the TUN as if talking to the internet
  *  - We open protected sockets to the real hosts and inject replies into the TUN
- *  - All TCP payloads from the restricted app are logged and parsed (Opter Driver)
+ *  - Opter-relevant TCP payloads are logged and parsed (port 81 or DEL/PSS content)
  */
 class LocalVpnService : VpnService() {
 
@@ -229,8 +229,14 @@ class LocalVpnService : VpnService() {
 
         if (fromClient) session.clientBuffer.append(text) else session.serverBuffer.append(text)
 
-        // VPN is already restricted to com.opter.driver, so do not also require port 81.
-        val looksLikeOpter = true
+        // Only log/parse Opter-relevant traffic. Package is already restricted,
+        // but TLS and other ports must not be dumped into the log.
+        val looksLikeOpter = session.involvesPort81 ||
+            text.contains("DEL\t") ||
+            text.contains("PSS\t") ||
+            text.contains("Bekr", ignoreCase = true) ||
+            text.contains("Lastad", ignoreCase = true) ||
+            text.contains("Alltransport", ignoreCase = true)
 
         if (!looksLikeOpter) return
 
@@ -240,6 +246,7 @@ class LocalVpnService : VpnService() {
             else -> "← server→client :${session.remotePort}"
         }
 
+        // Log only this chunk, not the growing buffer (that inflated the log).
         val entry = buildString {
             appendLine("--------------------------------------------------")
             appendLine("[$timestamp] $direction  (${data.size} bytes)")
@@ -251,12 +258,6 @@ class LocalVpnService : VpnService() {
         } catch (_: Exception) {}
 
         parseAndStore(text)
-        if (session.serverBuffer.length in 1..500_000) {
-            parseAndStore(session.serverBuffer.toString())
-        }
-        if (session.clientBuffer.length in 1..500_000) {
-            parseAndStore(session.clientBuffer.toString())
-        }
     }
 
     private fun parseAndStore(text: String) {
