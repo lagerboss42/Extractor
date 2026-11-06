@@ -29,6 +29,11 @@ object OpterHttpParser {
         val extras = (embedded + binary).filter { s ->
             val id = s.rawId
             if (!id.isNullOrBlank() && id in byPackage) return@filter false
+            // Reject junk names/cities that the binary parser sometimes emits.
+            val name = s.recipient.trim()
+            val city = s.city.trim()
+            if (name.all { it.isDigit() } || name.equals("true", true) || name.equals("false", true)) return@filter false
+            if (city.equals("true", true) || city.equals("false", true) || city.all { it.isDigit() }) return@filter false
             keyOf(s) !in byAddress
         }
         return del + extras
