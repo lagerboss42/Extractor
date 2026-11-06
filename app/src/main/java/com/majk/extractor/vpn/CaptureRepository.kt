@@ -12,7 +12,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Holds parsed shipments for the current capture session.
- * VPN, Accessibility and OCR all write here (dedupe / enrich).
+ * Deduplicates aggressively (re-parsed packets must not inflate the count).
  * Persists to disk so a crash during Excel export does not wipe the capture.
  */
 object CaptureRepository {
@@ -60,69 +60,11 @@ object CaptureRepository {
         }
     }
 
-    /**
-     * Merge stops from OCR / Accessibility. Prefer non-empty fields from [incoming]
-     * when a matching stop already exists (same type+address+zip); otherwise append.
-     * VPN coords / IDs are kept when import lacks them.
-     */
-    fun mergeEnrich(incoming: List<Shipment>) {
-        if (incoming.isEmpty()) return
-        var changed = 0
-        for (s in incoming) {
-            val key = enrichKey(s)
-            val idx = parsedShipments.indexOfFirst { enrichKey(it) == key }
-            if (idx < 0) {
-                parsedShipments.add(s)
-                changed++
-            } else {
-                val old = parsedShipments[idx]
-                val merged = old.copy(
-                    recipient = s.recipient.ifBlank { old.recipient },
-                    address = when {
-                        looksLikeCoords(s.address) -> s.address
-                        looksLikeCoords(old.address) -> old.address
-                        s.address.isNotBlank() -> s.address
-                        else -> old.address
-                    },
-                    city = s.city.ifBlank { old.city },
-                    colliCount = if (s.colliCount > 0) s.colliCount else old.colliCount,
-                    weightKg = if (s.weightKg > 0) s.weightKg else old.weightKg,
-                    carrier = s.carrier.ifBlank { old.carrier },
-                    portkod = s.portkod ?: old.portkod,
-                    comment = s.comment ?: old.comment,
-                    lat = s.lat ?: old.lat,
-                    lon = s.lon ?: old.lon,
-                    sender = s.sender ?: old.sender,
-                    earliestMinutes = s.earliestMinutes ?: old.earliestMinutes,
-                    latestMinutes = s.latestMinutes ?: old.latestMinutes
-                )
-                if (merged != old) {
-                    parsedShipments[idx] = merged
-                    changed++
-                }
-            }
-        }
-        if (changed > 0) {
-            lastParseCount = parsedShipments.size
-            persist()
-        }
-    }
-
-    private fun enrichKey(s: Shipment): String {
-        val addr = s.address.lowercase().replace(" ", "")
-        val zip = s.zip.filter { it.isDigit() }
-        return "${s.type.name}|$addr|$zip"
-    }
-
-    private fun looksLikeCoords(a: String): Boolean {
-        val t = a.replace(',', ' ')
-        return Regex("""\\d{2}\\.\\d+\\s+\\d{2}\\.\\d+""").containsMatchIn(t)
-    }
-
     fun getShipments(): List<Shipment> = parsedShipments.toList()
 
     fun getRawLog(): String = rawChunks.joinToString("\n")
 
+    /** Re-parse an entire log file into shipments (deduped). */
     fun loadFromLogText(text: String) {
         clear(persist = false)
         if (text.isBlank()) return
@@ -132,31 +74,47 @@ object CaptureRepository {
         persist()
     }
 
-    fun reparseFromLogFile(logFile: File): Int {
+    /**
+     * Re-read opter_traffic_log.txt (ISO-8859-1, same as VPN capture) and rebuild stop list.
+     * Use after a parser upgrade or when the UI shows 0 but the log has DEL lines.
+     */
+    fun reparseFromLogFile(logFile: java.io.File): Int {
         if (!logFile.exists() || logFile.length() == 0L) {
             clear(persist = true)
             return 0
         }
+        val text = logFile.readText(Charsets.ISO_8859_1)
+        loadFromLogText(text)
+        return parsedShipments.size
+    }
+
+    /**
+     * Load a capture file the user picked manually.
+     * .pcap / .pcapng → extract TCP streams, decode ISO-8859-1, parse.
+     * .txt / .log / other → treat as ISO-8859-1 traffic log.
+     * Returns shipment count, or -1 on error.
+     */
+    fun loadCaptureFile(file: java.io.File): Int {
+        if (!file.exists() || file.length() == 0L) return 0
         return try {
-            val maxBytes = 8L * 1024 * 1024
-            val text = if (logFile.length() > maxBytes) {
-                logFile.inputStream().use { ins ->
-                    val buf = ByteArray(maxBytes.toInt())
-                    val n = ins.read(buf)
-                    String(buf, 0, n.coerceAtLeast(0), Charsets.ISO_8859_1)
+            when (file.extension.lowercase()) {
+                "pcap", "pcapng" -> {
+                    val streams = PcapReader.extractTcpStreams(file)
+                    if (streams.isEmpty()) return 0
+                    val combined = streams.joinToString("\n") {
+                        it.payload.toString(Charsets.ISO_8859_1)
+                    }
+                    loadFromLogText(combined)
+                    parsedShipments.size
                 }
-            } else {
-                logFile.readText(Charsets.ISO_8859_1)
+                else -> {
+                    loadFromLogText(file.readText(Charsets.ISO_8859_1))
+                    parsedShipments.size
+                }
             }
-            loadFromLogText(text)
-            parsedShipments.size
-        } catch (e: OutOfMemoryError) {
-            Log.e(TAG, "Re-parse OOM", e)
-            lastParseCount = parsedShipments.size
-            lastParseCount
         } catch (e: Exception) {
-            Log.e(TAG, "Re-parse failed: ${e.message}", e)
-            throw e
+            Log.w(TAG, "loadCaptureFile: ${e.message}")
+            -1
         }
     }
 
@@ -173,11 +131,16 @@ object CaptureRepository {
     }
 
     private fun dedupeKey(s: Shipment): String {
-        val addr = s.address.lowercase().replace(" ", "")
-        val zip = s.zip.filter { it.isDigit() }
-        val name = s.recipient.lowercase().replace(" ", "")
-        val type = s.type.name
-        return "$type|$name|$addr|$zip|${s.rawId.orEmpty()}"
+        if (!s.rawId.isNullOrBlank()) return "id:${s.rawId}"
+        return listOf(
+            s.type.name,
+            s.address.lowercase().replace(" ", ""),
+            s.zip.filter { it.isDigit() },
+            s.recipient.lowercase().substringBefore("/").trim(),
+            s.colliCount.toString(),
+            s.weightKg.toString(),
+            s.carrier.lowercase()
+        ).joinToString("|")
     }
 
     private fun persist() {
@@ -198,13 +161,13 @@ object CaptureRepository {
                         put("comment", s.comment ?: JSONObject.NULL)
                         put("carrier", s.carrier)
                         put("rawId", s.rawId ?: JSONObject.NULL)
+                        put("sender", s.sender ?: JSONObject.NULL)
                         if (s.lat != null) put("lat", s.lat) else put("lat", JSONObject.NULL)
                         if (s.lon != null) put("lon", s.lon) else put("lon", JSONObject.NULL)
-                        put("sender", s.sender ?: JSONObject.NULL)
                         if (s.earliestMinutes != null) put("earliestMinutes", s.earliestMinutes)
-                        else put("earliestMinutes", JSONObject.NULL)
+                            else put("earliestMinutes", JSONObject.NULL)
                         if (s.latestMinutes != null) put("latestMinutes", s.latestMinutes)
-                        else put("latestMinutes", JSONObject.NULL)
+                            else put("latestMinutes", JSONObject.NULL)
                     }
                 )
             }
@@ -240,9 +203,9 @@ object CaptureRepository {
                         lon = if (o.isNull("lon")) null else o.optDouble("lon"),
                         sender = o.optString("sender", null)?.takeIf { it.isNotBlank() && it != "null" },
                         earliestMinutes = if (o.isNull("earliestMinutes")) null
-                        else o.optInt("earliestMinutes"),
+                            else o.optInt("earliestMinutes"),
                         latestMinutes = if (o.isNull("latestMinutes")) null
-                        else o.optInt("latestMinutes")
+                            else o.optInt("latestMinutes")
                     )
                 )
             }
