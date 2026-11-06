@@ -27,9 +27,7 @@ import com.majk.extractor.data.model.ShipmentType
 import com.majk.extractor.vpn.CaptureRepository
 import com.majk.extractor.vpn.LocalVpnService
 import com.majk.extractor.vpn.VpnStatus
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 
 @Composable
@@ -69,15 +67,18 @@ fun MainScreen() {
         stopCount = CaptureRepository.lastParseCount
     }
 
-    // Refresh count while parsing may be filling stops
-    LaunchedEffect(Unit) {
-        while (true) {
-            stopCount = CaptureRepository.lastParseCount
-            kotlinx.coroutines.delay(1500)
-        }
-    }
-
     fun actuallyStartVpn() {
+        // Fail closed in the UI too — service refuses, but don't claim VPN is running.
+        val opterInstalled = try {
+            context.packageManager.getPackageInfo("com.opter.driver", 0)
+            true
+        } catch (_: Exception) {
+            false
+        }
+        if (!opterInstalled) {
+            status = "Opter Driver not installed — VPN refused"
+            return
+        }
         Handler(Looper.getMainLooper()).post {
             try {
                 val intent = Intent(context, LocalVpnService::class.java).apply {
@@ -85,7 +86,7 @@ fun MainScreen() {
                 }
                 context.startForegroundService(intent)
                 vpnRunning = true
-                status = "VPN started \u2013 open Opter Driver"
+                status = "VPN started – open Opter Driver"
             } catch (e: Exception) {
                 status = "VPN start failed: ${e.message}"
             }
@@ -99,6 +100,36 @@ fun MainScreen() {
             actuallyStartVpn()
         } else {
             status = "VPN permission denied"
+        }
+    }
+
+    val capturePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            try {
+                // Preserve extension so .pcap is not parsed as text.
+                val name = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                    val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+                }
+                val ext = name?.substringAfterLast('.', "")?.lowercase()?.takeIf { it in listOf("pcap", "pcapng", "txt", "log") }
+                    ?: "bin"
+                val dest = File(context.cacheDir, "capture_${System.currentTimeMillis()}.$ext")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    dest.outputStream().use { input.copyTo(it) }
+                }
+                val count = CaptureRepository.loadCaptureFile(dest)
+                stopCount = count.coerceAtLeast(0)
+                status = when {
+                    count < 0 -> "Could not read capture"
+                    count == 0 -> "No shipments in capture"
+                    else -> "Loaded $count stops from capture"
+                }
+            } catch (e: Exception) {
+                status = "Load failed: ${e.message}"
+            }
         }
     }
 
@@ -118,7 +149,7 @@ fun MainScreen() {
         context.startService(intent)
         vpnRunning = false
         stopCount = CaptureRepository.lastParseCount
-        status = "VPN stopped \u2013 $stopCount stops captured"
+        status = "VPN stopped – $stopCount stops captured"
     }
 
     fun shareFile(file: File, mimeType: String, title: String) {
@@ -152,45 +183,41 @@ fun MainScreen() {
     fun generateExcel(raw: List<Shipment>, label: String) {
         scope.launch {
             geocoding = true
-            status = "Building manifest\u2026"
+            status = "Building manifest…"
             try {
-                data class GenResult(val file: File, val message: String)
-                val result = withContext(Dispatchers.IO) {
-                    Geocoder.lantmaterietUser = lmUser.ifBlank { null }
-                    Geocoder.lantmaterietPass = lmPass.ifBlank { null }
+                Geocoder.lantmaterietUser = lmUser.ifBlank { null }
+                Geocoder.lantmaterietPass = lmPass.ifBlank { null }
 
-                    val cleaned = ManifestCleaner.cleanAndConsolidate(raw)
-                    val withPk = AddressStore.applyPortkods(cleaned)
-                    val opterKeys = withPk.map {
-                        "${it.address.lowercase().replace(" ", "")}|${it.zip.filter { c -> c.isDigit() }}"
-                    }.toSet()
-                    val kkbRows = activeFixedShipments().filter { s ->
-                        val k = "${s.address.lowercase().replace(" ", "")}|${s.zip.filter { c -> c.isDigit() }}"
-                        k.isBlank() || k !in opterKeys
-                    }
-                    val combined = withPk + kkbRows
-
-                    val withCoords = try {
-                        Geocoder.geocodeAll(combined)
-                    } catch (_: Exception) {
-                        combined
-                    }
-
-                    val file = ExcelGenerator.generate(context, withCoords)
-                    try {
-                        AddressStore.recordVisits(withPk)
-                    } catch (_: Exception) {
-                    }
-                    val geoCount = withCoords.count { it.lat != null }
-                    val kkb = kkbRows.size
-                    val remembered = withPk.count { it.portkodRemembered }
-                    GenResult(
-                        file,
-                        "$label: ${withCoords.size} rows (${withPk.size} from Opter, $kkb kkb\u00f6j, $remembered saved PK), $geoCount geocoded"
-                    )
+                val cleaned = ManifestCleaner.cleanAndConsolidate(raw)
+                val withPk = AddressStore.applyPortkods(cleaned)
+                val opterKeys = withPk.map {
+                    "${it.address.lowercase().replace(" ", "")}|${it.zip.filter { c -> c.isDigit() }}"
+                }.toSet()
+                val kkbRows = activeFixedShipments().filter { s ->
+                    val k = "${s.address.lowercase().replace(" ", "")}|${s.zip.filter { c -> c.isDigit() }}"
+                    k.isBlank() || k !in opterKeys
                 }
-                lastFile = result.file
-                status = result.message
+                val combined = withPk + kkbRows
+
+                status = "Geocoding (${combined.size} stops)…"
+                val withCoords = try {
+                    Geocoder.geocodeAll(combined)
+                } catch (e: Exception) {
+                    status = "Geocode skipped: ${e.message}"
+                    combined
+                }
+
+                status = "Writing Excel…"
+                val file = ExcelGenerator.generate(context, withCoords)
+                try {
+                    AddressStore.recordVisits(withPk)
+                } catch (_: Exception) {
+                }
+                lastFile = file
+                val geoCount = withCoords.count { it.lat != null }
+                val kkb = kkbRows.size
+                val remembered = withPk.count { it.portkodRemembered }
+                status = "$label: ${withCoords.size} rows (${withPk.size} from Opter, $kkb kkböj, $remembered saved PK), $geoCount geocoded"
             } catch (e: Exception) {
                 status = "Error: ${e.javaClass.simpleName}: ${e.message}"
             } finally {
@@ -200,29 +227,18 @@ fun MainScreen() {
     }
 
     fun generateFromCapture() {
-        scope.launch {
-            geocoding = true
-            try {
-                var raw = CaptureRepository.getShipments()
-                if (raw.isEmpty() && logFile.exists()) {
-                    status = "Re-parsing traffic log\u2026"
-                    withContext(Dispatchers.IO) {
-                        CaptureRepository.reparseFromLogFile(logFile)
-                    }
-                    raw = CaptureRepository.getShipments()
-                    stopCount = CaptureRepository.lastParseCount
-                }
-                if (raw.isEmpty() && activeFixedIds.isEmpty()) {
-                    status = "No stops captured and no kkb\u00f6j selected"
-                    return@launch
-                }
-                geocoding = false
-                generateExcel(raw, "Capture Excel")
-            } catch (e: Exception) {
-                status = "Error: ${e.javaClass.simpleName}: ${e.message}"
-                geocoding = false
-            }
+        var raw = CaptureRepository.getShipments()
+        if (raw.isEmpty() && logFile.exists()) {
+            status = "Re-parsing traffic log…"
+            CaptureRepository.reparseFromLogFile(logFile)
+            raw = CaptureRepository.getShipments()
+            stopCount = CaptureRepository.lastParseCount
         }
+        if (raw.isEmpty() && activeFixedIds.isEmpty()) {
+            status = "No stops captured and no kkböj selected"
+            return
+        }
+        generateExcel(raw, "Capture Excel")
     }
 
     fun generateTestExcel() {
@@ -230,21 +246,21 @@ fun MainScreen() {
             Shipment(
                 type = ShipmentType.DEL,
                 recipient = "KRISTIN HALLBERG",
-                address = "V\u00c4STAN 10",
+                address = "VÄSTAN 10",
                 zip = "59175",
                 city = "BORENSBORG",
                 colliCount = 2,
                 weightKg = 19,
                 portkod = "1234ok",
-                comment = "L\u00e4mna hos grannen",
+                comment = "Lämna hos grannen",
                 carrier = "TNT Sverige AB"
             ),
             Shipment(
                 type = ShipmentType.DEL,
-                recipient = "G\u00f6ran Karl Eskil Nilsson",
-                address = "F\u00c5RFIOLSV\u00c4GEN 4",
+                recipient = "Göran Karl Eskil Nilsson",
+                address = "FÅRFIOLSVÄGEN 4",
                 zip = "58666",
-                city = "LINK\u00d6PING",
+                city = "LINKÖPING",
                 colliCount = 5,
                 weightKg = 22,
                 portkod = null,
@@ -290,9 +306,16 @@ fun MainScreen() {
         }
 
         Text(
-            text = if (vpnRunning) "VPN: running \u00b7 stops: $stopCount" else "VPN: stopped \u00b7 last stops: $stopCount",
+            text = if (vpnRunning) "VPN: running · stops: $stopCount" else "VPN: stopped · last stops: $stopCount",
             style = MaterialTheme.typography.bodySmall
         )
+
+        Button(
+            onClick = { capturePicker.launch(arrayOf("*/*")) },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Load capture file")
+        }
 
         Button(
             onClick = { generateFromCapture() },
@@ -314,22 +337,14 @@ fun MainScreen() {
 
         Button(
             onClick = {
-                scope.launch {
-                    status = "Re-parsing traffic log\u2026"
-                    try {
-                        val n = withContext(Dispatchers.IO) {
-                            CaptureRepository.reparseFromLogFile(logFile)
-                        }
-                        stopCount = n
-                        status = when {
-                            n > 0 -> "Re-parsed log \u2192 $n stops"
-                            !logFile.exists() || logFile.length() == 0L -> "No traffic log to re-parse"
-                            else -> "Re-parsed log \u2192 0 stops (no DEL/list rows the parser accepts)"
-                        }
-                    } catch (e: Exception) {
-                        status = "Re-parse failed: ${e.javaClass.simpleName}: ${e.message}"
-                    }
-                }
+                val n = CaptureRepository.reparseFromLogFile(logFile)
+                stopCount = n
+                status = if (n > 0)
+                    "Re-parsed log → $n stops"
+                else if (!logFile.exists() || logFile.length() == 0L)
+                    "No traffic log to re-parse"
+                else
+                    "Re-parsed log → 0 stops (no DEL/list rows the parser accepts)"
             },
             enabled = logFile.exists(),
             modifier = Modifier.fillMaxWidth()
@@ -354,9 +369,9 @@ fun MainScreen() {
 
         HorizontalDivider()
 
-        Text("Kkb\u00f6j (tap to include)", style = MaterialTheme.typography.titleMedium)
+        Text("Kkböj (tap to include)", style = MaterialTheme.typography.titleMedium)
         Text(
-            "${activeFixedIds.size} selected \u00b7 Info = kkb\u00f6j",
+            "${activeFixedIds.size} selected · Info = kkböj",
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -393,21 +408,21 @@ fun MainScreen() {
         }
 
         TextButton(onClick = { showLmSettings = !showLmSettings }) {
-            Text(if (showLmSettings) "Hide Lantm\u00e4teriet settings" else "Lantm\u00e4teriet API (optional)")
+            Text(if (showLmSettings) "Hide Lantmäteriet settings" else "Lantmäteriet API (optional)")
         }
 
         if (showLmSettings) {
             OutlinedTextField(
                 value = lmUser,
                 onValueChange = { lmUser = it },
-                label = { Text("Lantm\u00e4teriet user") },
+                label = { Text("Lantmäteriet user") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
             OutlinedTextField(
                 value = lmPass,
                 onValueChange = { lmPass = it },
-                label = { Text("Lantm\u00e4teriet password") },
+                label = { Text("Lantmäteriet password") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -421,9 +436,11 @@ fun MainScreen() {
 
         Text(
             text = if (vpnRunning)
-                "VPN on. Open Opter in the SAME profile. Restart Opter to force list-load."
+                "VPN on. Open Opter in the SAME profile. Pull to refresh the stop list (loads cached route). Open a stop to force detail traffic."
             else
-                "Sources: VPN traffic. Share a screenshot as fallback if needed.",
+                "IMPORTANT: Extractor VPN only sees apps in the same Android profile.\n" +
+                "1. Start VPN\n2. Open Opter (personal profile) → refresh stops\n" +
+                "3. Stop VPN → check traffic log for :81\n4. Re-parse log if count is 0\n5. Generate Excel",
             style = MaterialTheme.typography.bodyMedium
         )
     }
