@@ -41,6 +41,10 @@ class LocalVpnService : VpnService() {
     private val sessions = ConcurrentHashMap<String, TcpSession>()
     private var tunOutput: FileOutputStream? = null
 
+    /** Debounced parse: one parse per session after a quiet period. */
+    private val parseJobs = ConcurrentHashMap<String, Job>()
+    private val parseDelayMs = 400L
+
     private val logFile by lazy {
         File(getExternalFilesDir(null), "opter_traffic_log.txt")
     }
@@ -246,7 +250,7 @@ class LocalVpnService : VpnService() {
             else -> "← server→client :${session.remotePort}"
         }
 
-        // Log only this chunk, not the growing buffer (that inflated the log).
+        // Log only this chunk, not the growing buffer.
         val entry = buildString {
             appendLine("--------------------------------------------------")
             appendLine("[$timestamp] $direction  (${data.size} bytes)")
@@ -257,7 +261,20 @@ class LocalVpnService : VpnService() {
             FileWriter(logFile, true).use { it.append(entry) }
         } catch (_: Exception) {}
 
-        parseAndStore(text)
+        // Debounce parse: wait for a quiet period so we parse complete responses,
+        // not every fragment. This stops the 60+ phantom stop inflation.
+        scheduleParse(session)
+    }
+
+    private fun scheduleParse(session: TcpSession) {
+        val key = session.key
+        parseJobs[key]?.cancel()
+        parseJobs[key] = scope.launch {
+            delay(parseDelayMs)
+            val text = session.serverBuffer.toString() + session.clientBuffer.toString()
+            if (text.isNotBlank()) parseAndStore(text)
+            parseJobs.remove(key)
+        }
     }
 
     private fun parseAndStore(text: String) {
@@ -333,7 +350,14 @@ class LocalVpnService : VpnService() {
         capturing.set(false)
         captureJob?.cancel()
         captureJob = null
-        sessions.values.forEach { it.close() }
+        // Flush any pending parses before closing sessions.
+        parseJobs.values.forEach { it.cancel() }
+        parseJobs.clear()
+        sessions.values.forEach { sess ->
+            val text = sess.serverBuffer.toString() + sess.clientBuffer.toString()
+            if (text.isNotBlank()) parseAndStore(text)
+            sess.close()
+        }
         sessions.clear()
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
