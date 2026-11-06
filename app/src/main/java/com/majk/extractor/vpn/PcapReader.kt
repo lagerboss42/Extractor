@@ -17,8 +17,8 @@ object PcapReader {
         if (bytes.size < 24) return emptyList()
 
         val magic = bytes.int32(0)
-        val little = magic == 0xA1B2C3D4 || magic == 0xA1B23C4D
-        if (!little && magic != 0xD4C3B2A1 && magic != 0x4D3CB2A1) {
+        val little = magic == 0xA1B2C3D4.toInt() || magic == 0xA1B23C4D.toInt()
+        if (!little && magic != 0xD4C3B2A1.toInt() && magic != 0x4D3CB2A1.toInt()) {
             return extractPcapNg(bytes)
         }
         val snapLen = bytes.int32(16, little).coerceAtLeast(64)
