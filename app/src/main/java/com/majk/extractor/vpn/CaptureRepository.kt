@@ -97,25 +97,36 @@ object CaptureRepository {
     fun loadCaptureFile(file: java.io.File): Int {
         if (!file.exists() || file.length() == 0L) return 0
         return try {
-            when (file.extension.lowercase()) {
-                "pcap", "pcapng" -> {
-                    val streams = PcapReader.extractTcpStreams(file)
-                    if (streams.isEmpty()) return 0
-                    val combined = streams.joinToString("\n") {
-                        it.payload.toString(Charsets.ISO_8859_1)
-                    }
-                    loadFromLogText(combined)
-                    parsedShipments.size
+            val looksPcap = file.extension.lowercase() in listOf("pcap", "pcapng") || isPcapMagic(file)
+            if (looksPcap) {
+                val streams = PcapReader.extractTcpStreams(file)
+                if (streams.isEmpty()) return 0
+                val combined = streams.joinToString("\n") {
+                    it.payload.toString(Charsets.ISO_8859_1)
                 }
-                else -> {
-                    loadFromLogText(file.readText(Charsets.ISO_8859_1))
-                    parsedShipments.size
-                }
+                loadFromLogText(combined)
+                parsedShipments.size
+            } else {
+                loadFromLogText(file.readText(Charsets.ISO_8859_1))
+                parsedShipments.size
             }
         } catch (e: Exception) {
             Log.w(TAG, "loadCaptureFile: ${e.message}")
             -1
         }
+    }
+
+    private fun isPcapMagic(file: java.io.File): Boolean {
+        if (file.length() < 4) return false
+        val head = ByteArray(4)
+        file.inputStream().use { it.read(head) }
+        val magic = ((head[0].toInt() and 0xFF) shl 24) or
+            ((head[1].toInt() and 0xFF) shl 16) or
+            ((head[2].toInt() and 0xFF) shl 8) or
+            (head[3].toInt() and 0xFF)
+        return magic == 0xA1B2C3D4 || magic == 0xD4C3B2A1 ||
+            magic == 0xA1B23C4D || magic == 0x4D3CB2A1 ||
+            magic == 0x0A0D0D0A // PCAPNG
     }
 
     fun clear(persist: Boolean = true) {
