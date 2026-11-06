@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Local VPN with userspace TCP relay:
  *  - Apps talk to the TUN as if talking to the internet
  *  - We open protected sockets to the real hosts and inject replies into the TUN
- *  - TCP port 81 payloads are logged and parsed (Opter Driver)
+ *  - All TCP payloads from the restricted app are logged and parsed (Opter Driver)
  */
 class LocalVpnService : VpnService() {
 
@@ -229,22 +229,13 @@ class LocalVpnService : VpnService() {
 
         if (fromClient) session.clientBuffer.append(text) else session.serverBuffer.append(text)
 
-        val looksLikeOpter = session.involvesPort81 ||
-            text.contains("DEL\t") ||
-            text.contains("PSS\t") ||
-            text.contains("Bekr", ignoreCase = true) ||
-            text.contains("Lastad", ignoreCase = true) ||
-            text.contains("LJUNGSBRO", ignoreCase = true) ||
-            text.contains("Alltransport", ignoreCase = true) ||
-            text.contains("Köpetorp", ignoreCase = true) ||
-            text.contains("Kopetorp", ignoreCase = true)
+        // VPN is already restricted to com.opter.driver, so do not also require port 81.
+        val looksLikeOpter = true
 
         if (!looksLikeOpter) return
 
         val timestamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())
         val direction = when {
-            fromClient && session.remotePort == 81 -> "→ REQUEST to :81"
-            !fromClient && session.remotePort == 81 -> "← RESPONSE from :81"
             fromClient -> "→ client→server :${session.remotePort}"
             else -> "← server→client :${session.remotePort}"
         }
