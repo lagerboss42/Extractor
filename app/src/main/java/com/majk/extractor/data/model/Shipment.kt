@@ -39,7 +39,9 @@ data class Shipment(
      * Latest delivery time-of-day as minutes from midnight
      * (from Opter LATESTDELIVERYTIME / DEL timestamps). Null if unknown.
      */
-    val latestMinutes: Int? = null
+    val latestMinutes: Int? = null,
+    /** True when this Region stop was merged from multiple packages of the same recipient. */
+    val consolidated: Boolean = false
 ) {
     /**
      * Time-frame column for Excel — always `hh:mm-hh:mm` when both bounds exist.
@@ -83,9 +85,10 @@ data class Shipment(
         return parts.joinToString(" / ")
     }
 
-    /** Recipient column — blank when carrier is Region */
+    /** Recipient column — blank for Region only when the stop was consolidated. */
     fun excelRecipient(): String {
-        return if (carrier.equals("Region", ignoreCase = true)) "" else recipient
+        val isRegion = carrier.contains("Region", ignoreCase = true)
+        return if (isRegion && consolidated) "" else recipient
     }
 
     /** Combined coords for the trailing Excel column (empty header). */
