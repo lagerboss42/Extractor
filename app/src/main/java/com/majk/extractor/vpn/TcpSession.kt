@@ -94,20 +94,61 @@ class TcpSession(
 
         if (payload.isNotEmpty()) {
             try {
-                out?.write(payload)
-                out?.flush()
-                onStreamData(this, payload, true)
-                clientSeq = (seq + payload.size) and 0xFFFFFFFFL
-                val ackPkt = PacketUtils.buildIpv4Tcp(
-                    srcIp = serverIp,
-                    dstIp = clientIp,
-                    srcPort = serverPort,
-                    dstPort = clientPort,
-                    seq = serverSeq,
-                    ack = clientSeq,
-                    flags = PacketUtils.ACK
-                )
-                writeToTun(ackPkt)
+                val expected = clientSeq
+                when {
+                    // Pure retransmission of already-ACKed bytes — do not forward again.
+                    seq < expected && (seq + payload.size) <= expected -> {
+                        // re-ACK so the client stops retransmitting
+                        val ackPkt = PacketUtils.buildIpv4Tcp(
+                            srcIp = serverIp,
+                            dstIp = clientIp,
+                            srcPort = serverPort,
+                            dstPort = clientPort,
+                            seq = serverSeq,
+                            ack = clientSeq,
+                            flags = PacketUtils.ACK
+                        )
+                        writeToTun(ackPkt)
+                    }
+                    // Overlap: part already seen, rest is new.
+                    seq < expected && (seq + payload.size) > expected -> {
+                        val skip = (expected - seq).toInt()
+                        val fresh = payload.copyOfRange(skip, payload.size)
+                        out?.write(fresh)
+                        out?.flush()
+                        onStreamData(this, fresh, true)
+                        clientSeq = (expected + fresh.size) and 0xFFFFFFFFL
+                        val ackPkt = PacketUtils.buildIpv4Tcp(
+                            srcIp = serverIp,
+                            dstIp = clientIp,
+                            srcPort = serverPort,
+                            dstPort = clientPort,
+                            seq = serverSeq,
+                            ack = clientSeq,
+                            flags = PacketUtils.ACK
+                        )
+                        writeToTun(ackPkt)
+                    }
+                    // In order.
+                    seq == expected -> {
+                        out?.write(payload)
+                        out?.flush()
+                        onStreamData(this, payload, true)
+                        clientSeq = (expected + payload.size) and 0xFFFFFFFFL
+                        val ackPkt = PacketUtils.buildIpv4Tcp(
+                            srcIp = serverIp,
+                            dstIp = clientIp,
+                            srcPort = serverPort,
+                            dstPort = clientPort,
+                            seq = serverSeq,
+                            ack = clientSeq,
+                            flags = PacketUtils.ACK
+                        )
+                        writeToTun(ackPkt)
+                    }
+                    // Future segment — drop; client will retransmit in order.
+                    else -> Unit
+                }
             } catch (e: Exception) {
                 Log.w(tag, "Write to remote failed: ${e.message}")
                 close()
