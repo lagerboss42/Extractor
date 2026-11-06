@@ -49,8 +49,13 @@ object OpterHttpParser {
         }
         val seenLine = mutableSetOf<String>()
         for (line in lines) {
-            if (!seenLine.add(line.take(120))) continue
+            // Include package-level ID in the dedupe key so distinct colli are never dropped.
             val fields = line.split("\t")
+            val pkgKey = fields.getOrNull(5)?.trim().orEmpty()
+                .ifBlank { fields.getOrNull(7)?.trim().orEmpty() }
+                .ifBlank { fields.getOrNull(9)?.trim().orEmpty() }
+            val lineKey = if (pkgKey.isNotBlank()) "$pkgKey|${line.take(80)}" else line.take(120)
+            if (!seenLine.add(lineKey)) continue
             if (fields.size < 30) continue
             try {
                 val shipmentId = fields.getOrNull(8)?.trim().orEmpty()
@@ -186,32 +191,6 @@ object OpterHttpParser {
             )
         }
         return shipments
-    }
-
-    fun classifyByStatus(shipment: Shipment, status: String?): Shipment {
-        if (status.isNullOrBlank()) return shipment
-        val s = status.lowercase()
-        return when {
-            "bekräftad" in s || "bekraftad" in s -> shipment.copy(type = ShipmentType.PICK)
-            "lastad" in s || "hämtad" in s || "hamtad" in s || "lossad" in s -> shipment.copy(type = ShipmentType.DEL)
-            else -> shipment
-        }
-    }
-
-    fun classifyByRoles(shipment: Shipment, mottagare: String?, avsandare: String? = null): Shipment {
-        val mott = TextEncoding.foldAscii(mottagare.orEmpty())
-        val avs = TextEncoding.foldAscii(avsandare.orEmpty())
-        val mottIsTerminal = TERMINAL_NAMES.any { it in mott } || TERMINAL_STREETS.any { it in mott }
-        val avsIsTerminal = TERMINAL_NAMES.any { it in avs } || TERMINAL_STREETS.any { it in avs }
-        return when {
-            mottIsTerminal && !avsIsTerminal -> shipment.copy(type = ShipmentType.PICK)
-            avsIsTerminal && !mottIsTerminal -> shipment.copy(type = ShipmentType.DEL)
-            else -> {
-                val stopIsTerminal = isTerminalAddress(shipment.address, shipment.recipient)
-                if (stopIsTerminal) shipment.copy(type = ShipmentType.PICK)
-                else shipment.copy(type = ShipmentType.DEL)
-            }
-        }
     }
 
     private fun recoverMissingStreet(name: String, street: String, number: String): Pair<String, String> {
