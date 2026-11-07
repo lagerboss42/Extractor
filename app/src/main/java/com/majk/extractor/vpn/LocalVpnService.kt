@@ -54,7 +54,7 @@ class LocalVpnService : VpnService() {
             ACTION_START -> startVpn()
             ACTION_STOP -> stopVpn()
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startVpn() {
@@ -230,7 +230,8 @@ class LocalVpnService : VpnService() {
         if (data.isEmpty()) return
         val text = String(data, Charsets.ISO_8859_1)
 
-        if (fromClient) session.clientBuffer.append(text) else session.serverBuffer.append(text)
+        if (fromClient) session.appendBounded(session.clientBuffer, text)
+        else session.appendBounded(session.serverBuffer, text)
 
         // Only log/parse Opter-relevant traffic. Package is already restricted,
         // but TLS and other ports must not be dumped into the log.
