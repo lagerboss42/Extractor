@@ -124,8 +124,8 @@ object CaptureRepository {
             ((head[1].toInt() and 0xFF) shl 16) or
             ((head[2].toInt() and 0xFF) shl 8) or
             (head[3].toInt() and 0xFF)
-        return magic == 0xA1B2C3D4 || magic == 0xD4C3B2A1 ||
-            magic == 0xA1B23C4D || magic == 0x4D3CB2A1 ||
+        return magic == 0xA1B2C3D4.toInt() || magic == 0xD4C3B2A1.toInt() ||
+            magic == 0xA1B23C4D.toInt() || magic == 0x4D3CB2A1.toInt() ||
             magic == 0x0A0D0D0A // PCAPNG
     }
 
