@@ -42,14 +42,18 @@ class TcpSession(
     private val alive = AtomicBoolean(true)
     private var readerThread: Thread? = null
 
-    /** Accumulated payloads for parsing (bounded). */
+    /** Accumulated payloads for parsing. Capped to avoid OOM on long sessions. */
     val clientBuffer = StringBuilder()
     val serverBuffer = StringBuilder()
+    private val maxBufferChars = 2_000_000
 
     /** Out-of-order client segments: seq -> payload. */
     private val reorder = TreeMap<Long, ByteArray>()
     private val maxReorderBytes = 64 * 1024
     private var reorderBytes = 0
+
+    /** Guard so a retransmitted FIN does not advance sequence twice. */
+    private var finReceived = false
 
     val remotePort: Int get() = serverPort
     val localPort: Int get() = clientPort
@@ -70,7 +74,8 @@ class TcpSession(
             val s = Socket()
             vpn.protect(s)
             s.tcpNoDelay = true
-            s.soTimeout = 30_000
+            // Idle timeout: Opter list loads can pause. 30s was killing live scans.
+            s.soTimeout = 120_000
             s.connect(
                 InetSocketAddress(PacketUtils.ipToString(serverIp, 0), serverPort),
                 10_000
@@ -119,7 +124,8 @@ class TcpSession(
             }
         }
 
-        if (flags and PacketUtils.FIN != 0) {
+        if (flags and PacketUtils.FIN != 0 && !finReceived) {
+            finReceived = true
             clientSeq = (clientSeq + 1) and 0xFFFFFFFFL
             try {
                 socket?.shutdownOutput()
@@ -189,6 +195,14 @@ class TcpSession(
         out?.write(data)
         out?.flush()
         onStreamData(this, data, true)
+    }
+
+    /** Append to a parse buffer, dropping the oldest half if it exceeds the cap. */
+    fun appendBounded(buf: StringBuilder, text: String) {
+        buf.append(text)
+        if (buf.length > maxBufferChars) {
+            buf.delete(0, buf.length - maxBufferChars / 2)
+        }
     }
 
     private fun sendAck(flags: Int) {
