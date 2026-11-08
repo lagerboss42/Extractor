@@ -22,6 +22,8 @@ object PcapReader {
             return extractPcapNg(bytes)
         }
         val snapLen = bytes.int32(16, little).coerceAtLeast(64)
+        // Link type at offset 20. PCAPdroid writes DLT_RAW (101): packet starts at IP.
+        val linkType = bytes.int32(20, little)
 
         val streams = mutableMapOf<String, ByteArrayOutputStream>()
         var off = 24
@@ -30,24 +32,38 @@ object PcapReader {
             val pktStart = off + 16
             val pktEnd = (pktStart + inclLen).coerceAtMost(bytes.size)
             if (pktEnd > pktStart) {
-                parsePacket(bytes, pktStart, pktEnd, streams)
+                parsePacket(bytes, pktStart, pktEnd, linkType, streams)
             }
             off = pktEnd
         }
         return streams.map { Stream(it.key, it.value.toByteArray()) }
     }
 
+    /**
+     * Skip the link-layer header and parse IPv4/TCP.
+     * 1 = Ethernet (14), 101 = raw IP (0), 113 = Linux cooked (16), 12 = raw IP (OpenBSD).
+     */
     private fun parsePacket(
         buf: ByteArray,
         start: Int,
         end: Int,
+        linkType: Int,
         streams: MutableMap<String, ByteArrayOutputStream>
     ) {
-        if (end - start < 34) return
-        // Ethernet
-        val etherType = buf.u16(start + 12)
-        if (etherType != 0x0800) return
-        val ipStart = start + 14
+        val ipStart = when (linkType) {
+            1 -> { // Ethernet
+                if (end - start < 14) return
+                if (buf.u16(start + 12) != 0x0800) return
+                start + 14
+            }
+            101, 12 -> start // DLT_RAW / DLT_RAW (OpenBSD): IP begins immediately
+            113 -> { // Linux cooked capture
+                if (end - start < 16) return
+                if (buf.u16(start + 14) != 0x0800) return
+                start + 16
+            }
+            else -> return
+        }
         if (end - ipStart < 20) return
         val verIhl = buf[ipStart].toInt() and 0xFF
         if (verIhl shr 4 != 4) return
@@ -69,19 +85,28 @@ object PcapReader {
     }
 
     private fun extractPcapNg(bytes: ByteArray): List<Stream> {
-        // Minimal PCAPNG: walk blocks looking for Enhanced Packet Blocks (type 6).
+        // Minimal PCAPNG: walk blocks. IDB (type 1) carries link type; EPB (type 6) carries packets.
         val streams = mutableMapOf<String, ByteArrayOutputStream>()
+        val linkByIface = mutableMapOf<Int, Int>()
         var off = 0
         while (off + 12 <= bytes.size) {
             val blockType = bytes.int32(off)
             val blockLen = bytes.int32(off + 4)
             if (blockLen < 12 || off + blockLen > bytes.size) break
-            if (blockType == 6) { // EPB
-                val pktStart = off + 28 // skip block header + interface id + timestamp + captured len
-                val capLen = bytes.int32(off + 20)
-                val pktEnd = (pktStart + capLen).coerceAtMost(off + blockLen - 4)
-                if (pktEnd > pktStart) {
-                    parsePacket(bytes, pktStart, pktEnd, streams)
+            when (blockType) {
+                1 -> { // Interface Description Block: link type at +8
+                    val link = bytes.int32(off + 8) and 0xFFFF
+                    linkByIface[linkByIface.size] = link
+                }
+                6 -> { // Enhanced Packet Block
+                    val iface = bytes.int32(off + 8)
+                    val link = linkByIface[iface] ?: 101
+                    val pktStart = off + 28
+                    val capLen = bytes.int32(off + 20)
+                    val pktEnd = (pktStart + capLen).coerceAtMost(off + blockLen - 4)
+                    if (pktEnd > pktStart) {
+                        parsePacket(bytes, pktStart, pktEnd, link, streams)
+                    }
                 }
             }
             off += blockLen
