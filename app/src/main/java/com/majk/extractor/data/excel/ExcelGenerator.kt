@@ -71,19 +71,20 @@ object ExcelGenerator {
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <fonts count="2">
     <font><sz val="11"/><name val="Calibri"/></font>
-    <font><sz val="11"/><name val="Calibri"/><b/></font>
+    <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
   </fonts>
-  <fills count="3">
+  <fills count="4">
     <fill><patternFill patternType="none"/></fill>
     <fill><patternFill patternType="gray125"/></fill>
-    <fill><patternFill patternType="solid"><fgColor rgb="FFBBDEFB"/><bgColor indexed="64"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF1A237E"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFBBDEFB"/></patternFill></fill>
   </fills>
   <borders count="1"><border/></borders>
   <cellStyleXfs count="1"><xf/></cellStyleXfs>
   <cellXfs count="3">
     <xf xfId="0"/>
-    <xf xfId="0" fontId="1" applyFont="1"/>
-    <xf xfId="0" fillId="2" applyFill="1"/>
+    <xf xfId="0" fontId="1" fillId="2" applyFont="1" applyFill="1"/>
+    <xf xfId="0" fillId="3" applyFill="1"/>
   </cellXfs>
 </styleSheet>"""
 
@@ -91,8 +92,8 @@ object ExcelGenerator {
         // Trailing coords column has an empty header (lat/lon combined).
         val headers = listOf(
             "Time frame",
-            "Recipient",
-            "Address",
+            "",
+            "",
             "zip",
             "city",
             "Info",
