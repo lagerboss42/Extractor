@@ -148,12 +148,12 @@ object OpterBinaryParser {
             val zipClean = zip.filter { it.isDigit() }.take(5)
             val cityClean = city.trim()
             val nameClean = name.trim()
-            // Reject junk: numeric "names" (zip misread), boolean cities, empty street.
-            if (nameClean.all { it.isDigit() } || nameClean.equals("true", true) || nameClean.equals("false", true)) {
+            // Empty is not junk — .all {} on empty is true in Kotlin.
+            if (nameClean.isNotEmpty() && (nameClean.all { it.isDigit() } || nameClean.equals("true", true) || nameClean.equals("false", true))) {
                 i++
                 continue
             }
-            if (cityClean.equals("true", true) || cityClean.equals("false", true) || cityClean.all { it.isDigit() }) {
+            if (cityClean.isNotEmpty() && (cityClean.equals("true", true) || cityClean.equals("false", true) || cityClean.all { it.isDigit() })) {
                 i++
                 continue
             }
