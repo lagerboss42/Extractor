@@ -16,7 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import com.majk.extractor.data.cleaner.ManifestCleaner
+import com.majk.extractor.BuildConfig
 import com.majk.extractor.data.db.AddressStore
 import com.majk.extractor.data.excel.ExcelGenerator
 import com.majk.extractor.data.geocode.Geocoder
@@ -40,6 +40,7 @@ fun MainScreen() {
     var vpnRunning by remember { mutableStateOf(VpnStatus.isRunning) }
     var stopCount by remember { mutableStateOf(CaptureRepository.lastParseCount) }
     var geocoding by remember { mutableStateOf(false) }
+    var geocodeEnabled by remember { mutableStateOf(false) }
 
     var activeFixedIds by remember { mutableStateOf(setOf<String>()) }
 
@@ -199,11 +200,15 @@ fun MainScreen() {
                 }
                 val combined = withPk + kkbRows
 
-                status = "Geocoding (${combined.size} stops)…"
-                val withCoords = try {
-                    Geocoder.geocodeAll(combined)
-                } catch (e: Exception) {
-                    status = "Geocode skipped: ${e.message}"
+                status = if (geocodeEnabled) "Geocoding (${combined.size} stops)…" else "Writing Excel…"
+                val withCoords = if (geocodeEnabled) {
+                    try {
+                        Geocoder.geocodeAll(combined)
+                    } catch (e: Exception) {
+                        status = "Geocode skipped: ${e.message}"
+                        combined
+                    }
+                } else {
                     combined
                 }
 
@@ -411,6 +416,17 @@ fun MainScreen() {
             Text(if (showLmSettings) "Hide Lantmäteriet settings" else "Lantmäteriet API (optional)")
         }
 
+        Row(
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Checkbox(
+                checked = geocodeEnabled,
+                onCheckedChange = { geocodeEnabled = it }
+            )
+            Text("Geocode addresses")
+        }
+
         if (showLmSettings) {
             OutlinedTextField(
                 value = lmUser,
@@ -442,6 +458,13 @@ fun MainScreen() {
                 "1. Start VPN\n2. Open Opter (personal profile) → refresh stops\n" +
                 "3. Stop VPN → check traffic log for :81\n4. Re-parse log if count is 0\n5. Generate Excel",
             style = MaterialTheme.typography.bodyMedium
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = BuildConfig.VERSION_NAME,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
