@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.majk.extractor.BuildConfig
+import com.majk.extractor.data.cleaner.ManifestCleaner
 import com.majk.extractor.data.db.AddressStore
 import com.majk.extractor.data.excel.ExcelGenerator
 import com.majk.extractor.data.geocode.Geocoder
