@@ -29,6 +29,8 @@ object OpterBinaryParser {
     private const val F_NUMBER = 7
     private const val F_ZIP = 8
     private const val F_CITY = 9
+    private const val F_ENTRECODE = 11 // ADR_EntreCode
+    private const val F_INFO = 17       // ADR_Info
 
     // Coordinate patterns in free text (dot or comma decimal, various separators)
     private val COORD_PATTERN = Pattern.compile(
@@ -49,7 +51,8 @@ object OpterBinaryParser {
         var colli: Int = 0,
         var weight: Int = 0,
         var carrier: String = "",
-        var comment: String? = null
+        var comment: String? = null,
+        var portkod: String? = null
     ) {
         val isTerminal: Boolean
             get() {
@@ -135,12 +138,16 @@ object OpterBinaryParser {
             var number = ""
             var zip = ""
             var city = ""
+            var entre = ""
+            var info = ""
             var k = i + 1
-            while (k < fields.size && k <= i + 8) {
+            while (k < fields.size && k <= i + 12) {
                 when (fields[k].id) {
                     F_NUMBER -> if (number.isEmpty()) number = fields[k].value
                     F_ZIP -> if (zip.isEmpty()) zip = fields[k].value
                     F_CITY -> if (city.isEmpty()) city = fields[k].value
+                    F_ENTRECODE -> if (entre.isEmpty()) entre = fields[k].value
+                    F_INFO -> if (info.isEmpty()) info = fields[k].value
                     F_NAME, F_STREET -> break
                 }
                 k++
@@ -158,6 +165,7 @@ object OpterBinaryParser {
                 continue
             }
             if (zipClean.length == 5 && f.value.length >= 3) {
+                val code = entre.trim().takeIf { it.isNotEmpty() }
                 result.add(
                     Addr(
                         offset = f.offset,
@@ -165,7 +173,9 @@ object OpterBinaryParser {
                         street = f.value,
                         number = number.trim(),
                         zip = zipClean,
-                        city = cityClean
+                        city = cityClean,
+                        portkod = code,
+                        comment = info.trim().takeIf { it.isNotEmpty() }
                     )
                 )
             }
@@ -284,7 +294,7 @@ object OpterBinaryParser {
             city = a.city,
             colliCount = a.colli,
             weightKg = a.weight,
-            portkod = null,
+            portkod = a.portkod,
             comment = a.comment,
             carrier = a.carrier,
             sender = null,
