@@ -37,8 +37,8 @@ object OpterHttpParser {
         const val WEIGHT_A = 39
         const val WEIGHT_B = 40
         const val COLLI = 45
-        const val TIME_A = 49
-        const val TIME_B = 58
+        const val TIME_A = 48
+        const val TIME_B = 57
     }
 
     fun parse(payload: String): List<Shipment> {
