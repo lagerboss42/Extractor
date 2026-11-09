@@ -74,7 +74,7 @@ data class Shipment(
             parts.add(if (portkodRemembered) "{$portkod}" else "PK $portkod")
         }
 
-        if (!comment.isNullOrBlank()) {
+        if (!comment.isNullOrBlank() && !isPackageId(comment)) {
             parts.add(comment.trim())
         }
 
@@ -83,6 +83,11 @@ data class Shipment(
         }
 
         return parts.joinToString(" / ")
+    }
+
+    private fun isPackageId(v: String): Boolean {
+        val digits = v.count { it.isDigit() }
+        return digits >= 10 && digits.toDouble() / v.length > 0.8
     }
 
     /** Recipient column — blank for Region only when the stop was consolidated. */
