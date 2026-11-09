@@ -12,6 +12,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
@@ -47,7 +48,7 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     var tab by rememberSaveable { mutableIntStateOf(0) }
-                    Column(Modifier.fillMaxSize()) {
+                    Column(Modifier.fillMaxSize().systemBarsPadding()) {
                         TabRow(
                             selectedTabIndex = tab,
                             modifier = Modifier.fillMaxWidth(),
