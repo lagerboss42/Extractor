@@ -52,6 +52,8 @@ object ManifestCleaner {
         val match: (Shipment) -> Boolean
     )
 
+    private val GE_WORD = Regex("""\bGE\b""")
+
     private val FIXED_SITES = listOf(
         FixedSite("ASM Foods", "84CJ+J3R Mjölby", "59530", "Mjölby") {
             val rec = normalizeAscii(it.recipient)
@@ -64,7 +66,7 @@ object ManifestCleaner {
         },
         FixedSite("GE", "93QV+9M2 Skänninge", "59631", "Skänninge") {
             val rec = normalizeAscii(it.recipient)
-            rec.contains("GE ENERGY") || Regex("""\bGE\b""").containsMatchIn(rec)
+            rec.contains("GE ENERGY") || GE_WORD.containsMatchIn(rec)
         },
         FixedSite("Universal Power", "93PW+J25 Skänninge", "59631", "Skänninge") {
             normalizeAscii(it.recipient).contains("UNIVERSAL")
