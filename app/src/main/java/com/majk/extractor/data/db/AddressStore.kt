@@ -350,14 +350,29 @@ object AddressStore {
         private val file = java.io.File(dir, "extractor.db")
         private var database: SQLiteDatabase? = null
 
+        @Synchronized
         fun writable(): SQLiteDatabase {
             database?.takeIf { it.isOpen }?.let { return it }
-            dir.mkdirs()
-            migrateFromInternal()
-            val db = SQLiteDatabase.openOrCreateDatabase(file, null)
-            ensureSchema(db)
-            database = db
-            return db
+            val opened = openExternal() ?: openInternal()
+            ensureSchema(opened)
+            database = opened
+            return opened
+        }
+
+        private fun openExternal(): SQLiteDatabase? {
+            return try {
+                if (!dir.exists() && !dir.mkdirs()) return null
+                migrateFromInternal()
+                SQLiteDatabase.openOrCreateDatabase(file, null)
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        private fun openInternal(): SQLiteDatabase {
+            val old = context.getDatabasePath("extractor.db")
+            old.parentFile?.mkdirs()
+            return SQLiteDatabase.openOrCreateDatabase(old, null)
         }
 
         private fun migrateFromInternal() {
