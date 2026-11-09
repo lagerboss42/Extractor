@@ -44,6 +44,44 @@ object ManifestCleaner {
     private const val CLOETTA_ZIP = "58580"
     private const val CLOETTA_CITY = "Ljungsbro"
 
+    private data class FixedSite(
+        val recipient: String,
+        val address: String,
+        val zip: String,
+        val city: String,
+        val match: (Shipment) -> Boolean
+    )
+
+    private val FIXED_SITES = listOf(
+        FixedSite("ASM Foods", "84CJ+J3R Mjölby", "59530", "Mjölby") {
+            val rec = normalizeAscii(it.recipient)
+            val addr = normalizeAscii(it.address)
+            val mjolby = isMjolby(it)
+            rec.contains("ASM") || (mjolby && (addr.contains("KYRKOGATAN") || addr.contains("MAGASINSGATAN")))
+        },
+        FixedSite("Nelleman", "93QW+43H Skänninge", "59631", "Skänninge") {
+            normalizeAscii(it.recipient).contains("NELLEMAN")
+        },
+        FixedSite("GE", "93QV+9M2 Skänninge", "59631", "Skänninge") {
+            val rec = normalizeAscii(it.recipient)
+            rec.contains("GE ENERGY") || Regex("""\bGE\b""").containsMatchIn(rec)
+        },
+        FixedSite("Universal Power", "93PW+J25 Skänninge", "59631", "Skänninge") {
+            normalizeAscii(it.recipient).contains("UNIVERSAL")
+        },
+        FixedSite("Runsven", "93JX+Q98 Skänninge", "59631", "Skänninge") {
+            val rec = normalizeAscii(it.recipient)
+            val addr = normalizeAscii(it.address).replace(" ", "")
+            rec.contains("RUNSVEN") || addr.contains("BORGMASTAREGATAN23") || addr.contains("MJOLBYGATAN25")
+        },
+        FixedSite("Vestas", "93QR+5H8 Skänninge", "59631", "Skänninge") {
+            normalizeAscii(it.recipient).contains("VESTAS")
+        },
+        FixedSite("Aebi", "93PV+H3J Skänninge", "59631", "Skänninge") {
+            normalizeAscii(it.recipient).contains("AEBI")
+        }
+    )
+
     fun cleanAndConsolidate(raw: List<Shipment>): List<Shipment> {
         val cleaned = raw.map { cleanSingle(it) }
         return consolidate(cleaned)
@@ -101,14 +139,17 @@ object ManifestCleaner {
         val portF = mutableListOf<Shipment>()
         val portD = mutableListOf<Shipment>()
         val cloetta = mutableListOf<Shipment>()
+        val fixedBuckets = FIXED_SITES.map { mutableListOf<Shipment>() }
         val rest = mutableListOf<Shipment>()
 
         for (s in list) {
+            val site = FIXED_SITES.indexOfFirst { it.match(s) }
             when {
                 isPortF(s) -> portF.add(s)
                 isPortD(s) -> portD.add(s)
                 isPortK(s) -> portK.add(s)
                 isCloetta(s) -> cloetta.add(s)
+                site >= 0 -> fixedBuckets[site].add(s)
                 else -> rest.add(s)
             }
         }
@@ -126,6 +167,9 @@ object ManifestCleaner {
         }
         if (cloettaDel.isNotEmpty()) {
             result.add(mergeFixedPort(cloettaDel, CLOETTA_DEL_RECIPIENT, CLOETTA_DEL_ADDRESS, CLOETTA_ZIP, CLOETTA_CITY))
+        }
+        FIXED_SITES.forEachIndexed { i, site ->
+            addFixedByType(result, fixedBuckets[i], site.recipient, site.address, site.zip, site.city)
         }
 
         val grouped = rest.groupBy {
