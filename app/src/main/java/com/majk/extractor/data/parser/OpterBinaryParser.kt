@@ -231,7 +231,7 @@ object OpterBinaryParser {
                     }
                 }
                 if (a.comment == null && v.length in 5..120 && !COORD_PATTERN.matcher(v).find()) {
-                    if (v.any { it.isLetter() } && !v.startsWith("1-") && !isPackageId(v)) {
+                    if (v.any { it.isLetter() } && !v.startsWith("1-") && !isPackageId(v) && !isStatusOnly(v)) {
                         a.comment = v
                     }
                 }
@@ -270,10 +270,24 @@ object OpterBinaryParser {
         }
     }
 
+    private val STATUS_WORDS = setOf(
+        "skapad", "meddelad", "nekad", "lastad", "lossad", "makulerad",
+        "bekraftad", "bekraftad", "avbruten", "ombokad", "utlamnad"
+    )
+
     private fun isPackageId(v: String): Boolean {
         val digits = v.count { it.isDigit() }
         return digits >= 10 && digits.toDouble() / v.length > 0.8
     }
+
+    private fun isStatusOnly(v: String): Boolean {
+        val tokens = v.split(Regex("[\\s/|,]+")).filter { it.isNotBlank() }
+        if (tokens.isEmpty()) return true
+        return tokens.all { foldStatus(it) in STATUS_WORDS }
+    }
+
+    private fun foldStatus(s: String): String =
+        s.lowercase().replace("ä", "a").replace("ö", "o").replace("å", "a").replace("é", "e")
 
     private fun toShipment(a: Addr, type: ShipmentType): Shipment {
         val address = when {
