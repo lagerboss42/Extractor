@@ -1,6 +1,7 @@
 package com.majk.extractor.data.model
 
 import com.majk.extractor.util.AddressUtils
+import com.majk.extractor.util.CarrierNames
 
 enum class ShipmentType {
     DEL,
@@ -74,8 +75,9 @@ data class Shipment(
             parts.add(if (portkodRemembered) "{$portkod}" else "PK $portkod")
         }
 
-        if (!comment.isNullOrBlank() && !isPackageId(comment)) {
-            parts.add(comment.trim())
+        if (!comment.isNullOrBlank()) {
+            val kept = stripJunk(comment)
+            if (kept.isNotBlank()) parts.add(kept)
         }
 
         if (carrier.isNotBlank()) {
@@ -89,6 +91,33 @@ data class Shipment(
         val digits = v.count { it.isDigit() }
         return digits >= 10 && digits.toDouble() / v.length > 0.8
     }
+
+    private val statusWords = setOf(
+        "skapad", "meddelad", "nekad", "lastad", "lossad", "makulerad",
+        "bekraftad", "avbruten", "ombokad", "utlamnad"
+    )
+
+    /** Drop package IDs and Opter status words from the free-text part of Info. */
+    private fun stripJunk(raw: String): String {
+        return raw.split(Regex("\\s*/\\s*|\\s*\\|\\s*"))
+            .map { it.trim() }
+            .filter { token ->
+                token.isNotBlank() &&
+                    !isPackageId(token) &&
+                    fold(token) !in statusWords &&
+                    !isCarrierToken(token)
+            }
+            .joinToString(" / ")
+    }
+
+    private fun isCarrierToken(token: String): Boolean {
+        if (token.equals(carrier, ignoreCase = true)) return true
+        val short = CarrierNames.shorten(token)
+        return short.isNotBlank() && short != token.trim() && short.equals(carrier, ignoreCase = true)
+    }
+
+    private fun fold(s: String): String =
+        s.lowercase().replace("ä", "a").replace("ö", "o").replace("å", "a").replace("é", "e")
 
     /** Recipient column — blank for Region only when the stop was consolidated. */
     fun excelRecipient(): String {
