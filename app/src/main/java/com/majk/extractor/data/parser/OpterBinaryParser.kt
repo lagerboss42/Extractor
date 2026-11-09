@@ -166,6 +166,7 @@ object OpterBinaryParser {
             }
             if (zipClean.length == 5 && f.value.length >= 3) {
                 val code = entre.trim().takeIf { it.isNotEmpty() }
+                val note = info.trim().takeIf { it.isNotEmpty() && !isPackageId(it) }
                 result.add(
                     Addr(
                         offset = f.offset,
@@ -175,7 +176,7 @@ object OpterBinaryParser {
                         zip = zipClean,
                         city = cityClean,
                         portkod = code,
-                        comment = info.trim().takeIf { it.isNotEmpty() }
+                        comment = note
                     )
                 )
             }
@@ -230,7 +231,7 @@ object OpterBinaryParser {
                     }
                 }
                 if (a.comment == null && v.length in 5..120 && !COORD_PATTERN.matcher(v).find()) {
-                    if (v.any { it.isLetter() } && !v.startsWith("1-") && !v.all { it.isDigit() }) {
+                    if (v.any { it.isLetter() } && !v.startsWith("1-") && !isPackageId(v)) {
                         a.comment = v
                     }
                 }
@@ -267,6 +268,11 @@ object OpterBinaryParser {
             val key = "${s.type}|${s.zip}|${s.address.lowercase()}"
             seen.add(key)
         }
+    }
+
+    private fun isPackageId(v: String): Boolean {
+        val digits = v.count { it.isDigit() }
+        return digits >= 10 && digits.toDouble() / v.length > 0.8
     }
 
     private fun toShipment(a: Addr, type: ShipmentType): Shipment {
