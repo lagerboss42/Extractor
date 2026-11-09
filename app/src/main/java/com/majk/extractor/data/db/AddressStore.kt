@@ -3,7 +3,6 @@ package com.majk.extractor.data.db
 import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteOpenHelper
 import com.majk.extractor.data.model.Shipment
 import java.time.LocalDate
 
@@ -44,7 +43,7 @@ object AddressStore {
 
     private fun db(): SQLiteDatabase {
         val h = helper ?: error("AddressStore not initialised")
-        return h.writableDatabase
+        return h.writable()
     }
 
     fun applyPortkods(shipments: List<Shipment>): List<Shipment> {
@@ -342,11 +341,39 @@ object AddressStore {
     private fun isKkb(s: Shipment): Boolean =
         s.carrier.equals("kkb\u00f6j", ignoreCase = true)
 
-    private class Helper(context: Context) : SQLiteOpenHelper(context, "extractor.db", null, 1) {
-        override fun onCreate(db: SQLiteDatabase) {
+    /**
+     * Database lives at /storage/emulated/0/Extractor/extractor.db so it survives
+     * uninstall and is browsable. On first run, copies the old internal file across.
+     */
+    private class Helper(private val context: Context) {
+        private val dir = java.io.File("/storage/emulated/0/Extractor")
+        private val file = java.io.File(dir, "extractor.db")
+        private var database: SQLiteDatabase? = null
+
+        fun writable(): SQLiteDatabase {
+            database?.takeIf { it.isOpen }?.let { return it }
+            dir.mkdirs()
+            migrateFromInternal()
+            val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+            ensureSchema(db)
+            database = db
+            return db
+        }
+
+        private fun migrateFromInternal() {
+            if (file.exists()) return
+            val old = context.getDatabasePath("extractor.db")
+            if (!old.exists()) return
+            try {
+                old.copyTo(file, overwrite = false)
+            } catch (_: Exception) {
+            }
+        }
+
+        private fun ensureSchema(db: SQLiteDatabase) {
             db.execSQL(
                 """
-                CREATE TABLE pk_codes (
+                CREATE TABLE IF NOT EXISTS pk_codes (
                     address_key TEXT PRIMARY KEY,
                     address TEXT NOT NULL,
                     zip TEXT,
@@ -358,7 +385,7 @@ object AddressStore {
             )
             db.execSQL(
                 """
-                CREATE TABLE address_log (
+                CREATE TABLE IF NOT EXISTS address_log (
                     address_key TEXT NOT NULL,
                     address TEXT NOT NULL,
                     zip TEXT,
@@ -371,8 +398,6 @@ object AddressStore {
                 """.trimIndent()
             )
         }
-
-        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
     }
 }
 
