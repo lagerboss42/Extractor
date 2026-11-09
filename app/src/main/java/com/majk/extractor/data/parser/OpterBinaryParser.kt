@@ -24,6 +24,7 @@ import java.util.regex.Pattern
  */
 object OpterBinaryParser {
 
+    private const val F_LGH = 5         // ADR_Lgh / apartment line
     private const val F_NAME = 2
     private const val F_STREET = 6
     private const val F_NUMBER = 7
@@ -140,6 +141,7 @@ object OpterBinaryParser {
             var city = ""
             var entre = ""
             var info = ""
+            var lgh = ""
             var k = i + 1
             while (k < fields.size && k <= i + 12) {
                 when (fields[k].id) {
@@ -148,6 +150,7 @@ object OpterBinaryParser {
                     F_CITY -> if (city.isEmpty()) city = fields[k].value
                     F_ENTRECODE -> if (entre.isEmpty()) entre = fields[k].value
                     F_INFO -> if (info.isEmpty()) info = fields[k].value
+                    F_LGH -> if (lgh.isEmpty()) lgh = fields[k].value
                     F_NAME, F_STREET -> break
                 }
                 k++
@@ -166,7 +169,7 @@ object OpterBinaryParser {
             }
             if (zipClean.length == 5 && f.value.length >= 3) {
                 val code = entre.trim().takeIf { it.isNotEmpty() }
-                val note = info.trim().takeIf { it.isNotEmpty() && !isPackageId(it) }
+                val note = allowedNote(lgh) ?: allowedNote(info)
                 result.add(
                     Addr(
                         offset = f.offset,
@@ -230,11 +233,6 @@ object OpterBinaryParser {
                         if (w != null && w > 0) a.weight = kotlin.math.ceil(w).toInt()
                     }
                 }
-                if (a.comment == null && v.length in 5..120 && !COORD_PATTERN.matcher(v).find()) {
-                    if (v.any { it.isLetter() } && !v.startsWith("1-") && !isPackageId(v) && !isStatusOnly(v)) {
-                        a.comment = v
-                    }
-                }
             }
         }
     }
@@ -289,6 +287,20 @@ object OpterBinaryParser {
 
     private fun foldStatus(s: String): String =
         s.lowercase().replace("ä", "a").replace("ö", "o").replace("å", "a").replace("é", "e")
+
+    /** Only real notes. Project names, statuses and package IDs are not notes. */
+    private fun allowedNote(raw: String): String? {
+        val v = raw.trim()
+        if (v.length !in 3..80) return null
+        if (isPackageId(v) || isStatusOnly(v)) return null
+        val folded = foldStatus(v)
+        if (folded.startsWith("test")) return null
+        val ok = folded.startsWith("lgh") ||
+            "fullmakt" in folded ||
+            "portkod" in folded ||
+            Regex("""\bkod\b""").containsMatchIn(folded)
+        return if (ok) v else null
+    }
 
     private fun toShipment(a: Addr, type: ShipmentType): Shipment {
         val address = when {
