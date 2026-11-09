@@ -65,9 +65,29 @@ object OpterHttpParser {
                 val id = s.rawId
                 !id.isNullOrBlank() && id !in seenIds
             }
-            return del + extras
+            // Entry codes and coords live on the list-load address, not on DEL.
+            // Copy them onto the matching DEL row instead of dropping them.
+            val enriched = del.map { d -> enrichFromBinary(d, binary) }
+            return enriched + extras
         }
         return (embedded + binary).filter { !isJunk(it) }
+    }
+
+    private fun enrichFromBinary(del: Shipment, binary: List<Shipment>): Shipment {
+        if (!del.portkod.isNullOrBlank() && del.lat != null) return del
+        val key = addrKey(del)
+        val match = binary.firstOrNull { addrKey(it) == key } ?: return del
+        return del.copy(
+            portkod = del.portkod ?: match.portkod,
+            lat = del.lat ?: match.lat,
+            lon = del.lon ?: match.lon
+        )
+    }
+
+    private fun addrKey(s: Shipment): String {
+        val a = s.address.lowercase().replace(Regex("[^a-z0-9]"), "")
+        val z = s.zip.filter { it.isDigit() }
+        return "$a|$z"
     }
 
     fun containsDelMarker(payload: String): Boolean =
