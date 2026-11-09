@@ -45,20 +45,8 @@ fun DatabaseScreen() {
     var showRemove by remember { mutableStateOf(false) }
 
     LaunchedEffect(query, tab, revision) {
-        val q = query.trim().lowercase()
-        if (tab == 0) {
-            codes = AddressStore.listPortkods().filter {
-                q.isEmpty() || it.address.lowercase().contains(q) ||
-                    it.zip.contains(q) || it.city.lowercase().contains(q) ||
-                    it.code.lowercase().contains(q)
-            }
-        } else {
-            visits = AddressStore.listVisits().filter {
-                q.isEmpty() || it.address.lowercase().contains(q) ||
-                    it.zip.contains(q) || it.city.lowercase().contains(q) ||
-                    it.date.contains(q)
-            }
-        }
+        if (tab == 0) codes = AddressStore.searchCodes(query)
+        else visits = AddressStore.searchVisits(query)
     }
 
     Column(
@@ -81,7 +69,7 @@ fun DatabaseScreen() {
         }
         if (tab == 0) {
             Text(
-                "${codes.size} saved codes \u00b7 shown as {code} when PK is missing",
+                "${codes.size} saved codes · shown as {code} when PK is missing",
                 style = MaterialTheme.typography.bodySmall
             )
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -118,7 +106,7 @@ fun DatabaseScreen() {
             }
         } else {
             Text(
-                "${visits.size} rows \u00b7 address, shipments, weight, date",
+                "${visits.size} rows · address, shipments, weight, date",
                 style = MaterialTheme.typography.bodySmall
             )
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -165,7 +153,7 @@ fun DatabaseScreen() {
                     menuTarget = null
                 },
                 onSave = { newCode ->
-                    AddressStore.updatePortkod(t.entry.address, t.entry.zip, newCode)
+                    AddressStore.updateCode(t.entry.address, t.entry.zip, newCode)
                     showModify = false
                     menuTarget = null
                 }
@@ -203,14 +191,14 @@ fun DatabaseScreen() {
                     menuTarget = null
                 },
                 onConfirmed = {
-                    AddressStore.deletePortkod(t.entry.address, t.entry.zip)
+                    AddressStore.deleteCode(t.entry.address, t.entry.zip)
                     showRemove = false
                     menuTarget = null
                 }
             )
             is DbTarget.Visit -> RemoveConfirmDialog(
                 title = "Remove visit?",
-                summary = "${t.entry.address}\n${t.entry.shipments} \u00b7 ${t.entry.totalWeight} kg \u00b7 ${t.entry.date}",
+                summary = "${t.entry.address}\n${t.entry.shipments} · ${t.entry.totalWeight} kg · ${t.entry.date}",
                 onDismiss = {
                     showRemove = false
                     menuTarget = null
@@ -271,7 +259,7 @@ private fun VisitCard(row: VisitEntry, onLongPress: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall
             )
             Text(
-                "${row.shipments} shipments \u00b7 ${row.totalWeight} kg \u00b7 ${row.date}",
+                "${row.shipments} shipments · ${row.totalWeight} kg · ${row.date}",
                 style = MaterialTheme.typography.bodyMedium
             )
         }
@@ -326,7 +314,7 @@ private fun ModifyVisitDialog(
     val weightInt = weight.toIntOrNull()
     val valid = shipInt != null && shipInt >= 0 &&
         weightInt != null && weightInt >= 0 &&
-        date.trim().matches(Regex("""\\d{4}-\\d{2}-\\d{2}"""))
+        date.trim().matches(Regex("""\d{4}-\d{2}-\d{2}"""))
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -439,7 +427,7 @@ private fun RemoveConfirmDialog(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    if (holding) "Hold\u2026" else "Confirm",
+                    if (holding) "Hold…" else "Confirm",
                     color = Color.White,
                     style = MaterialTheme.typography.labelLarge
                 )
