@@ -77,7 +77,7 @@ data class Shipment(
 
         if (!comment.isNullOrBlank()) {
             val kept = stripJunk(comment)
-            if (kept.isNotBlank()) parts.add(kept)
+            if (kept.isNotBlank() && isAllowedNote(kept)) parts.add(kept)
         }
 
         if (carrier.isNotBlank()) {
@@ -109,6 +109,15 @@ data class Shipment(
                     !isCarrierToken(token)
             }
             .joinToString(" / ")
+    }
+
+    private fun isAllowedNote(v: String): Boolean {
+        val folded = fold(v)
+        if (folded.startsWith("test")) return false
+        return folded.startsWith("lgh") ||
+            "fullmakt" in folded ||
+            "portkod" in folded ||
+            Regex("""\bkod\b""").containsMatchIn(folded)
     }
 
     private fun isCarrierToken(token: String): Boolean {
