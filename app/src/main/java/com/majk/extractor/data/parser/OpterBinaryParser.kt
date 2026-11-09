@@ -272,7 +272,8 @@ object OpterBinaryParser {
 
     private val STATUS_WORDS = setOf(
         "skapad", "meddelad", "nekad", "lastad", "lossad", "makulerad",
-        "bekraftad", "bekraftad", "avbruten", "ombokad", "utlamnad"
+        "bekraftad", "bekraftad", "avbruten", "ombokad", "utlamnad",
+        "testprojekt", "test"
     )
 
     private fun isPackageId(v: String): Boolean {
