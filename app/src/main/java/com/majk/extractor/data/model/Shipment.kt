@@ -94,7 +94,8 @@ data class Shipment(
 
     private val statusWords = setOf(
         "skapad", "meddelad", "nekad", "lastad", "lossad", "makulerad",
-        "bekraftad", "avbruten", "ombokad", "utlamnad"
+        "bekraftad", "avbruten", "ombokad", "utlamnad",
+        "testprojekt", "test"
     )
 
     /** Drop package IDs and Opter status words from the free-text part of Info. */
