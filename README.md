@@ -35,7 +35,7 @@ Package: **`com.majk.extractor`**
 | Column | Content |
 |--------|---------|
 | **Time frame** | Delivery window from Opter `EARLIESTDELIVERYTIME` / `LATESTDELIVERYTIME` (DEL timestamps). Format `08-14` when minutes are `:00`, otherwise `08:15-14:30`. Empty if unknown. **Pickup rows** use light-blue cell background |
-| **Adress line 1** | Company / recipient name (e.g. `Port K`, `Cloetta Godsmottagning`). **Blank** when carrier is Region |
+| **Adress line 1** | Company / recipient name (e.g. `Port K`, `Cloetta Godsmottagning`). **Blank** when carrier is Region, unless several rows share the address and the recipients differ |
 | **Adress line 2** | Street + number. **Empty** for Port K / Port F / Port D / Cloetta (location via lat/lon only) |
 | **zip** | 5-digit postcode |
 | **city** | City (stray trailing digits removed) |
