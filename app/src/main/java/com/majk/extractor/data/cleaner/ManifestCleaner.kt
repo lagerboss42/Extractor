@@ -182,7 +182,11 @@ object ManifestCleaner {
             )
         }
         for ((_, group) in grouped) {
-            result.add(if (group.size == 1) group.first() else mergeGroup(group))
+            // A list-load row has no package ID. Drop it when a scanned row for the
+            // same stop exists, otherwise its default colli of 1 inflates the count.
+            val scanned = group.filter { !it.rawId.isNullOrBlank() }
+            val use = if (scanned.isNotEmpty()) scanned else group
+            result.add(if (use.size == 1) use.first() else mergeGroup(use))
         }
 
         return result.sortedWith(
@@ -343,7 +347,7 @@ object ManifestCleaner {
                 ?: first.earliestMinutes,
             latestMinutes = group.mapNotNull { it.latestMinutes }.maxOrNull()
                 ?: first.latestMinutes,
-            consolidated = first.carrier.contains("Region", ignoreCase = true)
+            consolidated = false
         )
     }
 
