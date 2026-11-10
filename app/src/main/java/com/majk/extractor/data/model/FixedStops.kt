@@ -39,6 +39,7 @@ object FixedStops {
         FixedStop("kronans", "Ljungsbro", "Kronans Apotek Ljungsbro", "Evastigen 9", "58571", "Ljungsbro"),
         FixedStop("vretaliden", "Ljungsbro", "Vretaliden", "Evastigen 19", "58571", "Ljungsbro"),
         FixedStop("harnebacken", "Ljungsbro", "Härnebacken", "Härnegatan 75", "58574", "Ljungsbro"),
+        FixedStop("tandklinik", "Ljungsbro", "Ljungsbro Tandklinik", "Norra Cloettavägen 17B", "58571", "Ljungsbro"),
         // Vreta Kloster
         FixedStop("kanalgarden", "Vreta Kloster", "Kanalgården", "Trossvägen 3", "58577", "Vreta Kloster"),
         // Skänninge
