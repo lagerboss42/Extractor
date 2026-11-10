@@ -4,7 +4,7 @@
 **Platform:** Android (Kotlin, Jetpack Compose)  
 **Repo:** GitHub `lagerboss42/Extractor` (private, GitHub Actions builds APK)  
 **Drive:** `/pub/Extractor` (testing tree; GitHub is live)  
-**Current version:** 0.4.6a  
+**Current version:** 0.4.7a  
 **Date:** 2026-11-09
 
 ---
