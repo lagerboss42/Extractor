@@ -43,6 +43,8 @@ fun DatabaseScreen() {
     var menuTarget by remember { mutableStateOf<DbTarget?>(null) }
     var showModify by remember { mutableStateOf(false) }
     var showRemove by remember { mutableStateOf(false) }
+    var showClearCodes by remember { mutableStateOf(false) }
+    var showClearVisits by remember { mutableStateOf(false) }
 
     LaunchedEffect(query, tab, revision) {
         if (tab == 0) codes = AddressStore.searchCodes(query)
@@ -68,10 +70,23 @@ fun DatabaseScreen() {
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Visits") })
         }
         if (tab == 0) {
-            Text(
-                "${codes.size} saved codes · shown as {code} when PK is missing",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "${codes.size} saved codes · shown as {code} when PK is missing",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = { showClearCodes = true },
+                    enabled = codes.isNotEmpty()
+                ) {
+                    Text("Clear all", color = Color(0xFFFF6B6B))
+                }
+            }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(codes, key = { "${it.address}|${it.zip}|${it.code}" }) { row ->
                     Box {
@@ -105,10 +120,23 @@ fun DatabaseScreen() {
                 }
             }
         } else {
-            Text(
-                "${visits.size} rows · address, shipments, weight, date",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "${visits.size} rows · address, shipments, weight, date",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = { showClearVisits = true },
+                    enabled = visits.isNotEmpty()
+                ) {
+                    Text("Clear all", color = Color(0xFFFF6B6B))
+                }
+            }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(visits, key = { "${it.address}|${it.zip}|${it.date}" }) { row ->
                     Box {
@@ -142,6 +170,29 @@ fun DatabaseScreen() {
                 }
             }
         }
+    }
+
+    if (showClearCodes) {
+        RemoveConfirmDialog(
+            title = "Clear all entry codes?",
+            summary = "This deletes every saved portkod. Visits are not touched.",
+            onDismiss = { showClearCodes = false },
+            onConfirmed = {
+                showClearCodes = false
+                AddressStore.clearCodes()
+            }
+        )
+    }
+    if (showClearVisits) {
+        RemoveConfirmDialog(
+            title = "Clear all visits?",
+            summary = "This deletes every visit row. Entry codes are not touched.",
+            onDismiss = { showClearVisits = false },
+            onConfirmed = {
+                showClearVisits = false
+                AddressStore.clearVisits()
+            }
+        )
     }
 
     if (showModify) {
