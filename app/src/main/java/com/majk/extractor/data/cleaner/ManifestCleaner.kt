@@ -58,8 +58,7 @@ object ManifestCleaner {
         FixedSite("ASM Foods", "84CJ+J3R Mjölby", "59530", "Mjölby") {
             val rec = normalizeAscii(it.recipient)
             val addr = normalizeAscii(it.address)
-            val mjolby = isMjolby(it)
-            rec.contains("ASM") || (mjolby && (addr.contains("KYRKOGATAN") || addr.contains("MAGASINSGATAN")))
+            rec.contains("ASM") && (addr.contains("KYRKOGATAN") || addr.contains("MAGASINSGATAN"))
         },
         FixedSite("Nelleman", "93QW+43H Skänninge", "59631", "Skänninge") {
             normalizeAscii(it.recipient).contains("NELLEMAN")
@@ -202,8 +201,7 @@ object ManifestCleaner {
 
     private fun isMjolby(s: Shipment): Boolean {
         val city = normalizeAscii(s.city).replace("OE", "O")
-        if ("MJOLBY" in city) return true
-        return s.zip.filter { it.isDigit() }.startsWith("595")
+        return "MJOLBY" in city
     }
 
     private fun isTruckgatan2(s: Shipment): Boolean {
