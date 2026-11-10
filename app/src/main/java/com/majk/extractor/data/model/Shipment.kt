@@ -151,10 +151,10 @@ data class Shipment(
     private fun fold(s: String): String =
         s.lowercase().replace("ä", "a").replace("ö", "o").replace("å", "a").replace("é", "e")
 
-    /** Recipient column — blank for Region only when the stop was consolidated. */
+    /** Recipient column — blank for Region unless the same address has different recipients. */
     fun excelRecipient(): String {
         val isRegion = carrier.contains("Region", ignoreCase = true)
-        return if (isRegion && consolidated) "" else recipient
+        return if (isRegion && !consolidated) "" else recipient
     }
 
     /** Combined coords for the trailing Excel column (empty header). */
