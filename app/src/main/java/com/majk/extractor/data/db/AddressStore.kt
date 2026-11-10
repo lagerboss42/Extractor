@@ -217,6 +217,18 @@ object AddressStore {
         return n > 0
     }
 
+    fun clearCodes(): Int {
+        val n = db().delete("pk_codes", null, null)
+        if (n > 0) bump()
+        return n
+    }
+
+    fun clearVisits(): Int {
+        val n = db().delete("address_log", null, null)
+        if (n > 0) bump()
+        return n
+    }
+
     fun updateVisit(
         address: String,
         zip: String,
