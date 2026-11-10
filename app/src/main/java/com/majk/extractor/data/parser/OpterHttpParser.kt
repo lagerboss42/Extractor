@@ -170,13 +170,14 @@ object OpterHttpParser {
                 val colli = colliRaw.toIntOrNull()?.coerceAtLeast(0) ?: 1
                 val weight = parseWeight(weightRaw)
                 val carrier = CarrierNames.shorten(carrierRaw)
-                val latestMin = parseDateTimeToMinutes(fields.getOrNull(DelCol.TIME_A))?.second
-                // Column 58 is earliest pickup, not the delivery window. Do not pair it.
-                // Solar with a before-noon latest bound is Solar F12 (07:00-12:00).
+                // Column 49 is latest delivery in UTC. Shift +1 h to local.
+                // F7 / F12 / "före XX" name a latest bound, never an earliest.
+                // Earliest is not in the DEL line. Leave it blank.
+                val latestUtc = parseDateTimeToMinutes(fields.getOrNull(DelCol.TIME_A))?.second
+                val latestLocal = latestUtc?.let { (it + 60) % (24 * 60) }
                 val solarF12 = carrier.equals("Solar", true) &&
-                    latestMin != null && latestMin <= 12 * 60
+                    latestLocal != null && latestLocal <= 12 * 60
                 val resolvedCarrier = if (solarF12) "Solar F12" else carrier
-                val window = if (solarF12) 7 * 60 to 12 * 60 else null to null
 
                 shipments.add(
                     Shipment(
@@ -192,8 +193,8 @@ object OpterHttpParser {
                         carrier = resolvedCarrier,
                         sender = resolved.other.ifBlank { null },
                         rawId = (packageId.ifBlank { shipmentId }).ifBlank { null },
-                        earliestMinutes = window.first,
-                        latestMinutes = window.second
+                        earliestMinutes = null,
+                        latestMinutes = latestLocal
                     )
                 )
             } catch (_: Exception) {
