@@ -175,9 +175,13 @@ object OpterHttpParser {
                 // Earliest is not in the DEL line. Leave it blank.
                 val latestUtc = parseDateTimeToMinutes(fields.getOrNull(DelCol.TIME_A))?.second
                 val latestLocal = latestUtc?.let { (it + 60) % (24 * 60) }
-                val solarF12 = carrier.equals("Solar", true) &&
-                    latestLocal != null && latestLocal <= 12 * 60
-                val resolvedCarrier = if (solarF12) "Solar F12" else carrier
+                // F7 = before 07:00, F12 = before 12:00. Both are latest bounds.
+                val resolvedCarrier = when {
+                    !carrier.equals("Solar", true) || latestLocal == null -> carrier
+                    latestLocal <= 7 * 60 -> "Solar F7"
+                    latestLocal <= 12 * 60 -> "Solar F12"
+                    else -> carrier
+                }
 
                 shipments.add(
                     Shipment(
