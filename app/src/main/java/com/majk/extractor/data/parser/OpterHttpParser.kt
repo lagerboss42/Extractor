@@ -37,8 +37,8 @@ object OpterHttpParser {
         const val WEIGHT_A = 39
         const val WEIGHT_B = 40
         const val COLLI = 45
-        const val TIME_A = 48
-        const val TIME_B = 57
+        const val TIME_A = 49
+        const val TIME_B = 58
     }
 
     fun parse(payload: String): List<Shipment> {
@@ -174,6 +174,11 @@ object OpterHttpParser {
                     fields.getOrNull(DelCol.TIME_A),
                     fields.getOrNull(DelCol.TIME_B)
                 )
+                // Solar with a before-noon latest bound is Solar F12 (07:00-12:00).
+                val solarF12 = carrier.equals("Solar", true) &&
+                    latestMin != null && latestMin <= 12 * 60
+                val resolvedCarrier = if (solarF12) "Solar F12" else carrier
+                val window = if (solarF12) 7 * 60 to 12 * 60 else earliestMin to latestMin
 
                 shipments.add(
                     Shipment(
@@ -186,11 +191,11 @@ object OpterHttpParser {
                         weightKg = weight,
                         portkod = null,
                         comment = null,
-                        carrier = carrier,
+                        carrier = resolvedCarrier,
                         sender = resolved.other.ifBlank { null },
                         rawId = (packageId.ifBlank { shipmentId }).ifBlank { null },
-                        earliestMinutes = earliestMin,
-                        latestMinutes = latestMin
+                        earliestMinutes = window.first,
+                        latestMinutes = window.second
                     )
                 )
             } catch (_: Exception) {
