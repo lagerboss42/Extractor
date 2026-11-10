@@ -200,8 +200,11 @@ object ManifestCleaner {
     private fun haystack(s: Shipment): String =
         normalizeAscii(listOf(s.recipient, s.address, s.sender.orEmpty()).joinToString(" "))
 
-    private fun isMjolby(s: Shipment): Boolean =
-        "MJOLBY" in normalizeAscii(s.city)
+    private fun isMjolby(s: Shipment): Boolean {
+        val city = normalizeAscii(s.city).replace("OE", "O")
+        if ("MJOLBY" in city) return true
+        return s.zip.filter { it.isDigit() }.startsWith("595")
+    }
 
     private fun isTruckgatan2(s: Shipment): Boolean {
         val addr = normalizeAscii(s.address).replace(" ", "")
