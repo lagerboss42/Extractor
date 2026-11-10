@@ -66,7 +66,7 @@ data class Shipment(
         if (carrier.equals("kkböj", ignoreCase = true)) return earliestMinutes to latestMinutes
         val local = isLocalRoute()
         val c = carrier.lowercase()
-        if (local && c.contains("tnt")) return 7 * 60 to 17 * 60
+        if (local && (c.contains("tnt") || c.contains("dachser"))) return 7 * 60 to 17 * 60
         if (local && c.contains("region")) return 8 * 60 to 14 * 60
         if (c.contains("solar") && c.contains("f12")) return 7 * 60 to 12 * 60
         return earliestMinutes to latestMinutes
