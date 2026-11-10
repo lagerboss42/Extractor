@@ -42,7 +42,7 @@ Key capabilities:
 - **Blue cell background** on pickup rows (light blue fill).
 - **Weights always round up** to nearest integer.
 - **Never dupe names** in Recipient.
-- **Region deliveries have no names** in Recipient only when the stop was consolidated. Otherwise keep the recipient.
+- **Region deliveries have no names** in Recipient. The name is kept only when several rows share the same address and the recipients differ, so those stops can be told apart.
 - **Only same-type merges**: pickups with pickups, deliveries with deliveries. Never merge pick with del.
 - **Carrier shortening**:
   - TNT* → TNT
