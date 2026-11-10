@@ -1,6 +1,6 @@
 # Extractor
 
-**Version:** `0.4.6a` (alpha). Bump the last number by 1 when there is 1 major change or 3 minor changes. Keep the `a` suffix until the app is stable. In-app UI stays English.
+**Version:** `0.4.7a` (alpha). Bump the last number by 1 when there is 1 major change or 3 minor changes. Keep the `a` suffix until the app is stable. In-app UI stays English.
 
 Private single-user Android app that captures **Opter Driver** (`com.opter.driver`) traffic, parses stops, applies cleaning rules, remembers entry codes, geocodes addresses, and exports an Excel file ready for import into **Spoke**.
 
