@@ -45,41 +45,22 @@ data class Shipment(
     val consolidated: Boolean = false
 ) {
     /**
-     * Time-frame column for Excel — always `hh:mm-hh:mm` when both bounds exist.
-     * Empty when either bound is missing.
+     * Time-frame column. `hh:mm-hh:mm` when both bounds exist.
+     * Latest only when the earliest is unknown. Empty when neither exists.
      */
     fun toTimeFrameColumn(): String {
         val (e, l) = resolveWindow()
-        if (e == null || l == null) return ""
-        val eh = e / 60
-        val em = e % 60
+        if (l == null) return ""
         val lh = l / 60
         val lm = l % 60
+        if (e == null) return "%02d:%02d".format(lh, lm)
+        val eh = e / 60
+        val em = e % 60
         return "%02d:%02d-%02d:%02d".format(eh, em, lh, lm)
     }
 
-    /**
-     * Local route windows when the DEL timestamps are date bounds, not a day window.
-     * TNT deliveries 07:00-17:00, Region deliveries 08:00-14:00.
-     */
-    private fun resolveWindow(): Pair<Int?, Int?> {
-        if (carrier.equals("kkböj", ignoreCase = true)) return earliestMinutes to latestMinutes
-        val local = isLocalRoute()
-        val c = carrier.lowercase()
-        if (local && c.contains("tnt")) return 7 * 60 to 17 * 60
-        if (local && c.contains("region")) return 8 * 60 to 14 * 60
-        if (c.contains("solar") && c.contains("f12")) return 7 * 60 to 12 * 60
-        return earliestMinutes to latestMinutes
-    }
-
-    private fun isLocalRoute(): Boolean {
-        val z = zip.filter { it.isDigit() }
-        val city = this.city.lowercase()
-        if (z.startsWith("585") || z.startsWith("586") || z.startsWith("595") || z.startsWith("596")) return true
-        return city.contains("ljungsbro") || city.contains("vreta") ||
-            city.contains("link") || city.contains("mjolby") || city.contains("mjölby") ||
-            city.contains("skanninge") || city.contains("skänninge")
-    }
+    /** No invented windows. Only the bounds the capture actually carried. */
+    private fun resolveWindow(): Pair<Int?, Int?> = earliestMinutes to latestMinutes
 
     /**
      * Info column layout (fixed order):
