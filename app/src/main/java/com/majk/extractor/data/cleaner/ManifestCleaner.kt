@@ -189,6 +189,7 @@ object ManifestCleaner {
             result.add(if (use.size == 1) use.first() else mergeGroup(use))
         }
 
+        markSharedRegionAddresses(result)
         return result.sortedWith(
             compareBy<Shipment> { it.type }
                 .thenBy { it.city }
@@ -349,6 +350,24 @@ object ManifestCleaner {
                 ?: first.latestMinutes,
             consolidated = false
         )
+    }
+
+    /**
+     * Region recipient is blank by default. Keep it only when the same address
+     * has more than one distinct recipient, so those stops can be told apart.
+     */
+    private fun markSharedRegionAddresses(result: MutableList<Shipment>) {
+        val region = result.filter { it.carrier.contains("Region", ignoreCase = true) }
+        val byAddr = region.groupBy { "${it.address.lowercase()}|${it.zip}" }
+        val shared = byAddr.filter { (_, g) ->
+            g.map { normalizeRecipientKey(it.recipient) }.filter { it.isNotBlank() }.distinct().size > 1
+        }.keys
+        for (i in result.indices) {
+            val s = result[i]
+            if (!s.carrier.contains("Region", ignoreCase = true)) continue
+            val key = "${s.address.lowercase()}|${s.zip}"
+            if (key in shared) result[i] = s.copy(consolidated = true)
+        }
     }
 
     private fun normalizeRecipientKey(recipient: String): String {
