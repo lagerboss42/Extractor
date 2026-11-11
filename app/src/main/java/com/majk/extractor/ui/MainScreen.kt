@@ -21,6 +21,8 @@ import com.majk.extractor.data.cleaner.ManifestCleaner
 import com.majk.extractor.data.db.AddressStore
 import com.majk.extractor.data.excel.ExcelGenerator
 import com.majk.extractor.data.geocode.Geocoder
+import com.majk.extractor.data.prefs.AppPreferences
+import com.majk.extractor.data.storage.UserDataStore
 import com.majk.extractor.data.model.FixedStop
 import com.majk.extractor.data.model.FixedStops
 import com.majk.extractor.data.model.Shipment
@@ -41,13 +43,9 @@ fun MainScreen() {
     var vpnRunning by remember { mutableStateOf(VpnStatus.isRunning) }
     var stopCount by remember { mutableStateOf(CaptureRepository.lastParseCount) }
     var geocoding by remember { mutableStateOf(false) }
-    var geocodeEnabled by remember { mutableStateOf(false) }
-
+    var geocodeEnabled by remember { mutableStateOf(AppPreferences.geocodeEnabled) }
+    var visibleSections by remember { mutableStateOf(AppPreferences.visibleSections()) }
     var activeFixedIds by remember { mutableStateOf(setOf<String>()) }
-
-    var lmUser by remember { mutableStateOf(Geocoder.lantmaterietUser.orEmpty()) }
-    var lmPass by remember { mutableStateOf(Geocoder.lantmaterietPass.orEmpty()) }
-    var showLmSettings by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         CaptureRepository.init(context)
@@ -70,7 +68,6 @@ fun MainScreen() {
     }
 
     fun actuallyStartVpn() {
-        // Fail closed in the UI too — service refuses, but don't claim VPN is running.
         val opterInstalled = try {
             context.packageManager.getPackageInfo("com.opter.driver", 0)
             true
@@ -88,7 +85,7 @@ fun MainScreen() {
                 }
                 context.startForegroundService(intent)
                 vpnRunning = true
-                status = "VPN started – open Opter Driver"
+                status = "Capture started – open Opter Driver"
             } catch (e: Exception) {
                 status = "VPN start failed: ${e.message}"
             }
@@ -111,7 +108,6 @@ fun MainScreen() {
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
             try {
-                // Preserve extension so .pcap is not parsed as text.
                 val name = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
                     val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                     if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
@@ -151,7 +147,28 @@ fun MainScreen() {
         context.startService(intent)
         vpnRunning = false
         stopCount = CaptureRepository.lastParseCount
-        status = "VPN stopped – $stopCount stops captured"
+        status = "Capture stopped – $stopCount stops captured"
+    }
+
+    fun openFile(file: File, mimeType: String) {
+        if (!file.exists()) {
+            status = "File not found"
+            return
+        }
+        try {
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.provider",
+                file
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mimeType)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            status = "Open failed: ${e.message}"
+        }
     }
 
     fun shareFile(file: File, mimeType: String, title: String) {
@@ -187,8 +204,8 @@ fun MainScreen() {
             geocoding = true
             status = "Building manifest…"
             try {
-                Geocoder.lantmaterietUser = lmUser.ifBlank { null }
-                Geocoder.lantmaterietPass = lmPass.ifBlank { null }
+                Geocoder.lantmaterietUser = AppPreferences.lantmaterietUser.ifBlank { null }
+                Geocoder.lantmaterietPass = AppPreferences.lantmaterietPass.ifBlank { null }
 
                 val cleaned = ManifestCleaner.cleanAndConsolidate(raw)
                 val withPk = AddressStore.applyPortkods(cleaned)
@@ -215,11 +232,15 @@ fun MainScreen() {
 
                 status = "Writing Excel…"
                 val file = ExcelGenerator.generate(context, withCoords)
+                val dest = UserDataStore.nextManifestFile()
+                try {
+                    file.copyTo(dest, overwrite = true)
+                } catch (_: Exception) {}
+                lastFile = dest.takeIf { it.exists() } ?: file
                 try {
                     AddressStore.recordVisits(withPk)
                 } catch (_: Exception) {
                 }
-                lastFile = file
                 val geoCount = withCoords.count { it.lat != null }
                 val kkb = kkbRows.size
                 val remembered = withPk.count { it.portkodRemembered }
@@ -247,36 +268,6 @@ fun MainScreen() {
         generateExcel(raw, "Capture Excel")
     }
 
-    fun generateTestExcel() {
-        val raw = listOf(
-            Shipment(
-                type = ShipmentType.DEL,
-                recipient = "KRISTIN HALLBERG",
-                address = "VÄSTAN 10",
-                zip = "59175",
-                city = "BORENSBORG",
-                colliCount = 2,
-                weightKg = 19,
-                portkod = "1234ok",
-                comment = "Lämna hos grannen",
-                carrier = "TNT Sverige AB"
-            ),
-            Shipment(
-                type = ShipmentType.DEL,
-                recipient = "Göran Karl Eskil Nilsson",
-                address = "FÅRFIOLSVÄGEN 4",
-                zip = "58666",
-                city = "LINKÖPING",
-                colliCount = 5,
-                weightKg = 22,
-                portkod = null,
-                comment = null,
-                carrier = "Region"
-            )
-        )
-        generateExcel(raw, "Test Excel")
-    }
-
     fun toggleFixed(id: String) {
         activeFixedIds = if (id in activeFixedIds) {
             activeFixedIds - id
@@ -292,7 +283,7 @@ fun MainScreen() {
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("Extractor", style = MaterialTheme.typography.headlineMedium)
+        Text("ExBeta", style = MaterialTheme.typography.headlineMedium)
         Text(status, style = MaterialTheme.typography.bodyMedium)
 
         Row(
@@ -303,16 +294,16 @@ fun MainScreen() {
                 onClick = { startVpn() },
                 enabled = !vpnRunning,
                 modifier = Modifier.weight(1f)
-            ) { Text("Start VPN") }
+            ) { Text("Start Capture") }
             Button(
                 onClick = { stopVpn() },
                 enabled = vpnRunning,
                 modifier = Modifier.weight(1f)
-            ) { Text("Stop VPN") }
+            ) { Text("Stop Capture") }
         }
 
         Text(
-            text = if (vpnRunning) "VPN: running · stops: $stopCount" else "VPN: stopped · last stops: $stopCount",
+            text = if (vpnRunning) "Capture: running · stops: $stopCount" else "Capture: stopped · last stops: $stopCount",
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -331,33 +322,6 @@ fun MainScreen() {
             Text("Generate Excel from Capture")
         }
 
-        Button(
-            onClick = {
-                shareFile(logFile, "text/plain", "Share Traffic Log")
-            },
-            enabled = logFile.exists(),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Share / Open Traffic Log")
-        }
-
-        Button(
-            onClick = {
-                val n = CaptureRepository.reparseFromLogFile(logFile)
-                stopCount = n
-                status = if (n > 0)
-                    "Re-parsed log → $n stops"
-                else if (!logFile.exists() || logFile.length() == 0L)
-                    "No traffic log to re-parse"
-                else
-                    "Re-parsed log → 0 stops (no DEL/list rows the parser accepts)"
-            },
-            enabled = logFile.exists(),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Re-parse traffic log")
-        }
-
         if (lastFile != null) {
             Button(
                 onClick = {
@@ -369,7 +333,18 @@ fun MainScreen() {
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Share / Open Excel")
+                Text("Share Excel")
+            }
+            Button(
+                onClick = {
+                    openFile(
+                        lastFile!!,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Open Excel")
             }
         }
 
@@ -381,7 +356,7 @@ fun MainScreen() {
             style = MaterialTheme.typography.bodySmall
         )
 
-        FixedStops.sections.forEach { section ->
+        FixedStops.sections.filter { it in visibleSections }.forEach { section ->
             Text(section, style = MaterialTheme.typography.titleSmall)
             val stops = FixedStops.all.filter { it.section == section }
             FlowRowFixed(stops = stops, activeIds = activeFixedIds, onToggle = { toggleFixed(it) })
@@ -396,70 +371,11 @@ fun MainScreen() {
                 stopCount = 0
                 status = "Captured stops cleared"
             },
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                contentColor = MaterialTheme.colorScheme.onSurface
-            )
+            enabled = stopCount > 0,
+            modifier = Modifier.fillMaxWidth()
         ) {
             Text("Clear captured stops")
         }
-
-        Button(
-            onClick = { generateTestExcel() },
-            enabled = !geocoding,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Generate Test Excel")
-        }
-
-        TextButton(onClick = { showLmSettings = !showLmSettings }) {
-            Text(if (showLmSettings) "Hide Lantmäteriet settings" else "Lantmäteriet API (optional)")
-        }
-
-        Row(
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Checkbox(
-                checked = geocodeEnabled,
-                onCheckedChange = { geocodeEnabled = it }
-            )
-            Text("Geocode addresses")
-        }
-
-        if (showLmSettings) {
-            OutlinedTextField(
-                value = lmUser,
-                onValueChange = { lmUser = it },
-                label = { Text("Lantmäteriet user") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            OutlinedTextField(
-                value = lmPass,
-                onValueChange = { lmPass = it },
-                label = { Text("Lantmäteriet password") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            Text(
-                text = "Leave empty to use only Nominatim (free).",
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Text(
-            text = if (vpnRunning)
-                "VPN on. Open Opter in the SAME profile. Pull to refresh the stop list (loads cached route). Open a stop to force detail traffic."
-            else
-                "IMPORTANT: Extractor VPN only sees apps in the same Android profile.\n" +
-                "1. Start VPN\n2. Open Opter (personal profile) → refresh stops\n" +
-                "3. Stop VPN → check traffic log for :81\n4. Re-parse log if count is 0\n5. Generate Excel",
-            style = MaterialTheme.typography.bodyMedium
-        )
 
         Spacer(modifier = Modifier.height(16.dp))
         Text(
