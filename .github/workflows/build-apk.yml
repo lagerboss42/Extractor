@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, Beta ]
   workflow_dispatch:
 
 jobs:
@@ -23,12 +23,11 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      # No chmod needed, we are using the global gradle installation
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Extractor-debug
+          name: ${{ github.ref_name }}-debug
           path: app/build/outputs/apk/debug/*.apk
