@@ -119,6 +119,7 @@ data class Shipment(
         val folded = fold(v)
         if (folded.startsWith("test")) return false
         return folded.startsWith("lgh") ||
+            folded.startsWith("ring") ||
             "fullmakt" in folded ||
             "portkod" in folded ||
             Regex("""\bkod\b""").containsMatchIn(folded)
