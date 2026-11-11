@@ -33,6 +33,7 @@ object OpterHttpParser {
         const val RECIPIENT_STREET = 26
         const val RECIPIENT_NUMBER = 27
         const val RECIPIENT_ZIP = 28
+        const val RECIPIENT_PK = 29   // entry code, between zip and phone
         const val CARRIER = 33
         const val WEIGHT_A = 39
         const val WEIGHT_B = 40
@@ -74,18 +75,18 @@ object OpterHttpParser {
     }
 
     private fun enrichFromBinary(del: Shipment, binary: List<Shipment>): Shipment {
-        if (!del.portkod.isNullOrBlank() && del.lat != null) return del
         val key = addrKey(del)
         val match = binary.firstOrNull { addrKey(it) == key } ?: return del
         return del.copy(
             portkod = del.portkod ?: match.portkod,
+            comment = del.comment ?: match.comment,
             lat = del.lat ?: match.lat,
             lon = del.lon ?: match.lon
         )
     }
 
     private fun addrKey(s: Shipment): String {
-        val a = s.address.lowercase().replace(Regex("[^a-z0-9]"), "")
+        val a = TextEncoding.foldAscii(s.address).replace(Regex("[^a-z0-9]"), "")
         val z = s.zip.filter { it.isDigit() }
         return "$a|$z"
     }
@@ -129,9 +130,12 @@ object OpterHttpParser {
                 val recipientNumber = fields.getOrNull(DelCol.RECIPIENT_NUMBER)?.trim().orEmpty()
                 val recipientZip = fields.getOrNull(DelCol.RECIPIENT_ZIP)?.trim()?.filter { it.isDigit() }?.take(5).orEmpty()
                 val carrierRaw = TextEncoding.fixSwedish(fields.getOrNull(DelCol.CARRIER)?.trim().orEmpty())
-                val weightRaw = fields.getOrNull(DelCol.WEIGHT_B)?.trim().orEmpty()
-                    .ifBlank { fields.getOrNull(DelCol.WEIGHT_A)?.trim().orEmpty() }
+                val weightRaw = pickWeight(
+                    fields.getOrNull(DelCol.WEIGHT_A),
+                    fields.getOrNull(DelCol.WEIGHT_B)
+                )
                 val colliRaw = fields.getOrNull(DelCol.COLLI)?.trim().orEmpty()
+                val portkodRaw = fields.getOrNull(DelCol.RECIPIENT_PK)?.trim().orEmpty()
 
                 val statusField = fields.getOrNull(DelCol.STATUS)?.trim().orEmpty().lowercase()
                 val nearbyText = fields.drop(10).take(40).joinToString(" ").lowercase()
@@ -167,6 +171,11 @@ object OpterHttpParser {
                 val address = buildAddress(recStreet, recNumber)
                 if (address.isBlank() && resolved.zip.length != 5) continue
 
+                // Column 29 is the recipient door code. Only a delivery uses that side.
+                val portkod = if (resolved.type == ShipmentType.DEL) {
+                    portkodRaw.takeIf { it.isNotEmpty() && it.all { c -> c.isDigit() } && it.length in 3..6 }
+                } else null
+
                 val colli = colliRaw.toIntOrNull()?.coerceAtLeast(0) ?: 1
                 val weight = parseWeight(weightRaw)
                 val carrier = CarrierNames.shorten(carrierRaw)
@@ -192,7 +201,7 @@ object OpterHttpParser {
                         city = resolved.city,
                         colliCount = if (colli > 0) colli else 1,
                         weightKg = weight,
-                        portkod = null,
+                        portkod = portkod,
                         comment = null,
                         carrier = resolvedCarrier,
                         sender = resolved.other.ifBlank { null },
@@ -239,6 +248,8 @@ object OpterHttpParser {
             seen.add(key)
             val address = buildAddress(street, number)
             if (isTerminalAddress(street, name)) continue
+            // Sender HQ of a delivery is not a stop. Truncated fragments of it neither.
+            if (isSenderGhost(name, street, zip)) continue
             shipments.add(
                 Shipment(
                     type = ShipmentType.DEL,
@@ -279,6 +290,20 @@ object OpterHttpParser {
             number.isBlank() -> street
             else -> "$street $number"
         }.trim()
+
+    /** Prefer a non-zero weight. Column 40 is often 0 while column 39 holds the real value. */
+    private fun pickWeight(a: String?, b: String?): String {
+        val sa = a?.trim().orEmpty()
+        val sb = b?.trim().orEmpty()
+        val va = parseWeight(sa)
+        val vb = parseWeight(sb)
+        return when {
+            vb > 0 -> sb
+            va > 0 -> sa
+            sb.isNotEmpty() -> sb
+            else -> sa
+        }
+    }
 
     private fun parseWeight(raw: String): Int {
         if (raw.isBlank()) return 0
@@ -324,6 +349,16 @@ object OpterHttpParser {
         val s = TextEncoding.foldAscii(streetOrAddress)
         val n = TextEncoding.foldAscii(name)
         return TERMINAL_STREETS.any { it in s } || TERMINAL_NAMES.any { it in n }
+    }
+
+    /** Sender address of a delivery, or a truncated fragment of the company name. */
+    private fun isSenderGhost(name: String, street: String, zip: String): Boolean {
+        val s = TextEncoding.foldAscii(street)
+        val n = TextEncoding.foldAscii(name)
+        if ("litiumgatan" in s && zip == "60223") return true
+        if (n.endsWith("tland ab") && n.length < 20) return true
+        if (n == "norrk" || n == "norrkoeping") return true
+        return false
     }
 
     private fun consolidateByRawId(list: List<Shipment>): List<Shipment> {
