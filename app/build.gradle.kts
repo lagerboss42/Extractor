@@ -8,11 +8,11 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.majk.extractor"
+        applicationId = "com.majk.exbeta"
         minSdk = 26
         targetSdk = 35
-        versionCode = 29
-        versionName = "0.4.11a"
+        versionCode = 30
+        versionName = "0.5.0b"
     }
 
     buildFeatures {
@@ -47,7 +47,7 @@ dependencies {
 
     implementation(platform("androidx.compose:compose-bom:2024.10.01"))
     implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
