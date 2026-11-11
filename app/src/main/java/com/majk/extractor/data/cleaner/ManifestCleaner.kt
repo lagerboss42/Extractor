@@ -180,11 +180,20 @@ object ManifestCleaner {
                 "${it.address.lowercase()}|${it.zip}"
             )
         }
-        for ((_, group) in grouped) {
-            // A list-load row has no package ID. Drop it when a scanned row for the
-            // same stop exists, otherwise its default colli of 1 inflates the count.
+        // Addresses that already have a scanned (package-id) row. A list-load row
+        // with no id at one of those addresses is a ghost, even if the name encoding
+        // differs and it landed in its own group.
+        val scannedAddresses = rest
+            .filter { !it.rawId.isNullOrBlank() }
+            .map { "${it.type}|${it.address.lowercase()}|${it.zip}" }
+            .toSet()
+        for ((key, group) in grouped) {
             val scanned = group.filter { !it.rawId.isNullOrBlank() }
             val use = if (scanned.isNotEmpty()) scanned else group
+            if (use.isEmpty()) continue
+            val addrKey = "${key.first}|${key.third}"
+            if (scanned.isEmpty() && addrKey in scannedAddresses) continue
+            if (isSenderGhost(use.first())) continue
             result.add(if (use.size == 1) use.first() else mergeGroup(use))
         }
 
@@ -194,6 +203,14 @@ object ManifestCleaner {
                 .thenBy { it.city }
                 .thenBy { it.address }
         )
+    }
+
+    private fun isSenderGhost(s: Shipment): Boolean {
+        val addr = normalizeAscii(s.address)
+        val name = normalizeAscii(s.recipient)
+        if ("LITIUMGATAN" in addr && s.zip == "60223") return true
+        if (name.endsWith("TLAND AB") && name.length < 20) return true
+        return false
     }
 
     private fun haystack(s: Shipment): String =
