@@ -32,6 +32,7 @@ object OpterBinaryParser {
     private const val F_CITY = 9
     private const val F_ENTRECODE = 11 // ADR_EntreCode
     private const val F_INFO = 17       // ADR_Info
+    private const val F_INSTRUCTION = 54 // SHI_Message. Driver notes ("Ring 30 min innan") and, when present, coordinates.
 
     // Coordinate patterns in free text (dot or comma decimal, various separators)
     private val COORD_PATTERN = Pattern.compile(
@@ -62,6 +63,12 @@ object OpterBinaryParser {
                 return "kopetorpsgatan" in s || "kromgatan" in s || "alltransport" in n
             }
 
+        val isSenderSide: Boolean
+            get() {
+                val s = TextEncoding.foldAscii(street)
+                return "litiumgatan" in s && zip == "60223"
+            }
+
         val isJunk: Boolean
             get() {
                 if (street.startsWith("Nekad", ignoreCase = true)) return true
@@ -80,6 +87,7 @@ object OpterBinaryParser {
         val addrs = buildAddresses(fields)
         attachFreeTextCoords(fields, addrs)
         attachColliWeightCarrier(fields, addrs)
+        attachInstructions(fields, addrs)
         return pairToShipments(addrs)
     }
 
@@ -94,7 +102,7 @@ object OpterBinaryParser {
             if (data[i] == 0x04.toByte()) {
                 val id = data[i + 1].toInt() and 0xFF
                 val len = (data[i + 2].toInt() and 0xFF) or ((data[i + 3].toInt() and 0xFF) shl 8)
-                if (len in 1..200 && i + 4 + len <= data.size) {
+                if (len in 1..512 && i + 4 + len <= data.size) {
                     val slice = data.copyOfRange(i + 4, i + 4 + len)
                     val value = decodeTlvString(slice)
                     if (value.isNotBlank()) {
@@ -188,6 +196,24 @@ object OpterBinaryParser {
         return result
     }
 
+    /** Driver instructions ("Ring 30 min innan") live in field 54, not on the address. */
+    private fun attachInstructions(fields: List<Tlv>, addrs: List<Addr>) {
+        if (addrs.isEmpty()) return
+        for (f in fields) {
+            if (f.id != F_INSTRUCTION) continue
+            val note = f.value.lineSequence()
+                .map { it.trim() }
+                .firstOrNull { allowedNote(it) != null }
+                ?: continue
+            val candidates = addrs.filter { !it.isTerminal && !it.isSenderSide }
+            val nearest = candidates.minByOrNull { kotlin.math.abs(it.offset - f.offset) } ?: continue
+            nearest.comment = listOfNotNull(nearest.comment, note)
+                .distinct()
+                .joinToString(" / ")
+                .ifBlank { null }
+        }
+    }
+
     private fun attachFreeTextCoords(fields: List<Tlv>, addrs: List<Addr>) {
         if (addrs.isEmpty()) return
         for (f in fields) {
@@ -198,7 +224,8 @@ object OpterBinaryParser {
             val lat = latStr.toDoubleOrNull() ?: continue
             val lon = lonStr.toDoubleOrNull() ?: continue
             if (lat in 58.414..58.416 && lon in 15.662..15.664) continue
-            val nearest = addrs.minByOrNull { kotlin.math.abs(it.offset - f.offset) } ?: continue
+            val candidates = addrs.filter { !it.isTerminal && !it.isSenderSide }
+            val nearest = candidates.minByOrNull { kotlin.math.abs(it.offset - f.offset) } ?: continue
             if (nearest.lat == null) {
                 nearest.lat = lat
                 nearest.lon = lon
@@ -296,6 +323,7 @@ object OpterBinaryParser {
         val folded = foldStatus(v)
         if (folded.startsWith("test")) return null
         val ok = folded.startsWith("lgh") ||
+            folded.startsWith("ring") ||
             "fullmakt" in folded ||
             "portkod" in folded ||
             Regex("""\bkod\b""").containsMatchIn(folded)
