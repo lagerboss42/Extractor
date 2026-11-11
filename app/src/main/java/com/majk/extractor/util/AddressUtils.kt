@@ -2,13 +2,16 @@ package com.majk.extractor.util
 
 object AddressUtils {
     fun fixSpacing(address: String): String {
-        return address.replace(Regex("([A-Za-zÅÄÖåäö])(\\d+)$")) {
+        val restored = TextEncoding.restoreSwedish(address)
+        return restored.replace(Regex("([A-Za-zÅÄÖåäö])(\\d+)$")) {
             "${it.groupValues[1]} ${it.groupValues[2]}"
         }.trim()
     }
 
     fun cleanCity(city: String): String {
-        return city.replace(Regex("\\s+\\d+$"), "").trim()
+        return TextEncoding.restoreSwedish(city)
+            .replace(Regex("\\s+\\d+$"), "")
+            .trim()
     }
 
     /**
