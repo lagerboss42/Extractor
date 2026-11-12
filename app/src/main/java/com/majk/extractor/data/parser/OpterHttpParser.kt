@@ -119,7 +119,8 @@ object OpterHttpParser {
                 val packageId = fields.getOrNull(DelCol.PACKAGE_ID_A)?.trim().orEmpty()
                     .ifBlank { fields.getOrNull(DelCol.PACKAGE_ID_B)?.trim().orEmpty() }
                     .ifBlank { fields.getOrNull(DelCol.PACKAGE_ID_C)?.trim().orEmpty() }
-                val recipientName = TextEncoding.fixSwedish(fields.getOrNull(DelCol.RECIPIENT_NAME)?.trim().orEmpty())
+                val recipientRaw = TextEncoding.fixSwedish(fields.getOrNull(DelCol.RECIPIENT_NAME)?.trim().orEmpty())
+                val (recipientName, nameNote) = splitNameNote(recipientRaw)
                 val recipientCity = TextEncoding.fixSwedish(fields.getOrNull(DelCol.RECIPIENT_CITY)?.trim().orEmpty())
                 val senderName = TextEncoding.fixSwedish(fields.getOrNull(DelCol.SENDER_NAME)?.trim().orEmpty())
                 val senderCity = TextEncoding.fixSwedish(fields.getOrNull(DelCol.SENDER_CITY)?.trim().orEmpty())
@@ -202,7 +203,7 @@ object OpterHttpParser {
                         colliCount = if (colli > 0) colli else 1,
                         weightKg = weight,
                         portkod = portkod,
-                        comment = null,
+                        comment = nameNote,
                         carrier = resolvedCarrier,
                         sender = resolved.other.ifBlank { null },
                         rawId = (packageId.ifBlank { shipmentId }).ifBlank { null },
@@ -214,6 +215,17 @@ object OpterHttpParser {
             }
         }
         return consolidateByRawId(shipments)
+    }
+
+    /** Recipient field is sometimes "NAME / note". Keep only a real instruction. */
+    private fun splitNameNote(raw: String): Pair<String, String?> {
+        if ("/" !in raw) return raw to null
+        val name = raw.substringBefore("/").trim()
+        val rest = raw.substringAfter("/").trim()
+        if (rest.isEmpty() || rest.equals(name, ignoreCase = true)) return name to null
+        val folded = TextEncoding.foldAscii(rest)
+        val noteWords = listOf("lamna", "ring", "fullmakt", "portkod", "kod", "dorr", "paket", "utanfor", "min")
+        return if (noteWords.any { it in folded }) name to rest else name to null
     }
 
     private data class Tuple7(
@@ -375,7 +387,8 @@ object OpterHttpParser {
                     portkod = group.mapNotNull { it.portkod }.firstOrNull(),
                     comment = group.mapNotNull { it.comment }.firstOrNull(),
                     earliestMinutes = group.mapNotNull { it.earliestMinutes }.minOrNull() ?: first.earliestMinutes,
-                    latestMinutes = group.mapNotNull { it.latestMinutes }.maxOrNull() ?: first.latestMinutes
+                    // Earliest of the latest-times: first deadline wins.
+                    latestMinutes = group.mapNotNull { it.latestMinutes }.minOrNull() ?: first.latestMinutes
                 )
             }
         }
