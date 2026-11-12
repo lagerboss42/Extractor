@@ -120,9 +120,14 @@ data class Shipment(
         if (folded.startsWith("test")) return false
         return folded.startsWith("lgh") ||
             folded.startsWith("ring") ||
+            folded.startsWith("okej") ||
             "fullmakt" in folded ||
             "portkod" in folded ||
-            Regex("""\bkod\b""").containsMatchIn(folded)
+            "lamna" in folded ||
+            "paket" in folded ||
+            "dorr" in folded ||
+            "utanfor" in folded ||
+            Regex("""\\bkod\\b""").containsMatchIn(folded)
     }
 
     private fun isCarrierToken(token: String): Boolean {
