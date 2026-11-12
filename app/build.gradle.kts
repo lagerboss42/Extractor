@@ -8,7 +8,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.majk.exbeta"
+        applicationId = "com.majk.extractor"
         minSdk = 26
         targetSdk = 35
         versionCode = 31
