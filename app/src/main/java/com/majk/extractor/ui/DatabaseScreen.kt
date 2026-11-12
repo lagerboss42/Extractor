@@ -44,7 +44,6 @@ fun DatabaseScreen() {
     var showModify by remember { mutableStateOf(false) }
     var showRemove by remember { mutableStateOf(false) }
     var showAddCode by remember { mutableStateOf(false) }
-    var showClearCodes by remember { mutableStateOf(false) }
     var showClearVisits by remember { mutableStateOf(false) }
 
     LaunchedEffect(query, tab, revision) {
@@ -184,6 +183,8 @@ fun DatabaseScreen() {
         var recipient by remember { mutableStateOf("") }
         var address by remember { mutableStateOf("") }
         var zip by remember { mutableStateOf("") }
+        var city by remember { mutableStateOf("") }
+        val canSave = code.isNotBlank() && (recipient.isNotBlank() || (address.isNotBlank() && zip.isNotBlank()))
         AlertDialog(
             onDismissRequest = { showAddCode = false },
             title = { Text("Add entry code") },
@@ -193,14 +194,18 @@ fun DatabaseScreen() {
                     OutlinedTextField(value = recipient, onValueChange = { recipient = it }, label = { Text("Recipient (optional)") }, singleLine = true)
                     OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Address") }, singleLine = true)
                     OutlinedTextField(value = zip, onValueChange = { zip = it }, label = { Text("Zip") }, singleLine = true)
+                    OutlinedTextField(value = city, onValueChange = { city = it }, label = { Text("City") }, singleLine = true)
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    if (AddressStore.insertManualCode(code, recipient.ifBlank { null }, address, zip)) {
-                        showAddCode = false
-                    }
-                }) { Text("Save") }
+                TextButton(
+                    onClick = {
+                        if (AddressStore.insertManualCode(code, recipient.ifBlank { null }, address, zip, city)) {
+                            showAddCode = false
+                        }
+                    },
+                    enabled = canSave
+                ) { Text("Save") }
             },
             dismissButton = {
                 TextButton(onClick = { showAddCode = false }) { Text("Cancel") }
@@ -240,7 +245,7 @@ fun DatabaseScreen() {
                     menuTarget = null
                 },
                 onSave = { newCode ->
-                    AddressStore.updateCode(t.entry.address, t.entry.zip, newCode)
+                    AddressStore.updateCode(t.entry.id, newCode)
                     showModify = false
                     menuTarget = null
                 }
@@ -278,7 +283,7 @@ fun DatabaseScreen() {
                     menuTarget = null
                 },
                 onConfirmed = {
-                    AddressStore.deleteCode(t.entry.address, t.entry.zip)
+                    AddressStore.deleteCode(t.entry.id)
                     showRemove = false
                     menuTarget = null
                 }

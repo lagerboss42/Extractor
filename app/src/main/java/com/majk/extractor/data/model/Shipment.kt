@@ -76,7 +76,13 @@ data class Shipment(
         }
 
         if (!portkod.isNullOrBlank()) {
-            parts.add(if (portkodRemembered) "{$portkod}" else "PK $portkod")
+            val codes = portkod.split(",").map { it.trim() }.filter { it.isNotEmpty() }.take(4)
+            if (codes.isNotEmpty()) {
+                parts.add(
+                    if (portkodRemembered) "/ pk ${codes.joinToString(", ")} /"
+                    else "PK ${codes.joinToString(", ")}"
+                )
+            }
         }
 
         if (!comment.isNullOrBlank()) {
@@ -127,7 +133,7 @@ data class Shipment(
             "paket" in folded ||
             "dorr" in folded ||
             "utanfor" in folded ||
-            Regex("""\\bkod\\b""").containsMatchIn(folded)
+            Regex("""\bkod\b""").containsMatchIn(folded)
     }
 
     private fun isCarrierToken(token: String): Boolean {

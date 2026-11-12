@@ -7,6 +7,7 @@ import com.majk.extractor.data.model.Shipment
 import java.time.LocalDate
 
 data class PkEntry(
+    val id: Long,
     val address: String,
     val zip: String,
     val city: String,
@@ -27,7 +28,6 @@ data class VisitEntry(
 /**
  * Persistent port codes and per-address visit log.
  * Same calendar day is overwritten (regenerating Excel does not double-count).
- * Separate SQLite files for entry codes and visits.
  */
 object AddressStore {
 
@@ -61,19 +61,27 @@ object AddressStore {
         val database = codesDb()
         val now = System.currentTimeMillis()
         return shipments.map { s ->
-            if (isKkb(s) || addressKey(s).isBlank()) return@map s
+            if (isKkb(s)) return@map s
+            val recKey = recipientKey(s.recipient)
+            val addrKey = addressKey(s)
+            if (recKey.isBlank() && addrKey.isBlank()) return@map s
 
             val (found, cleanedComment) = PortkodExtractor.extract(s.portkod, s.comment)
-            if (found != null) {
-                upsertCode(database, s, found, now)
-                s.copy(portkod = found, comment = cleanedComment, portkodRemembered = false)
+            if (found != null) upsertCode(database, s, found, now)
+
+            val saved = lookupCodes(database, s)
+            val codes = buildList {
+                if (found != null) add(found)
+                addAll(saved)
+            }.distinct().take(4)
+            if (codes.isEmpty()) {
+                if (found != null) s.copy(comment = cleanedComment) else s
             } else {
-                val saved = lookupCode(database, addressKey(s))
-                if (saved != null) {
-                    s.copy(portkod = saved, portkodRemembered = true)
-                } else {
-                    s
-                }
+                s.copy(
+                    portkod = codes.joinToString(", "),
+                    comment = if (found != null) cleanedComment else s.comment,
+                    portkodRemembered = saved.isNotEmpty()
+                )
             }
         }.also { bump() }
     }
@@ -112,6 +120,13 @@ object AddressStore {
         bump()
     }
 
+    /**
+     * Visit identity:
+     *  - Port K / D / F and Cloetta: one ID per consolidated site (and type).
+     *  - Region: group by address.
+     *  - Everything else: one group per unique recipient.
+     * Every shipment in the group adds to the count and weight.
+     */
     private fun visitKey(s: Shipment): String {
         val rec = s.recipient.trim()
         val port = when {
@@ -151,22 +166,23 @@ object AddressStore {
     fun searchCodes(query: String): List<PkEntry> {
         val q = "%${query.trim()}%"
         val sql = """
-            SELECT address, zip, city, code, recipient, updated_at
+            SELECT id, address, zip, city, code, recipient, updated_at
             FROM pk_codes
             WHERE address LIKE ? OR zip LIKE ? OR city LIKE ? OR code LIKE ? OR recipient LIKE ?
-            ORDER BY COALESCE(recipient, address) COLLATE NOCASE
+            ORDER BY COALESCE(recipient, address) COLLATE NOCASE, code COLLATE NOCASE
         """.trimIndent()
         val out = mutableListOf<PkEntry>()
         codesDb().rawQuery(sql, arrayOf(q, q, q, q, q)).use { c ->
             while (c.moveToNext()) {
                 out.add(
                     PkEntry(
-                        address = c.getString(0),
-                        zip = c.getString(1).orEmpty(),
-                        city = c.getString(2).orEmpty(),
-                        code = c.getString(3),
-                        recipient = c.getString(4)?.takeIf { it.isNotBlank() },
-                        updatedAt = c.getLong(5)
+                        id = c.getLong(0),
+                        address = c.getString(1),
+                        zip = c.getString(2).orEmpty(),
+                        city = c.getString(3).orEmpty(),
+                        code = c.getString(4),
+                        recipient = c.getString(5)?.takeIf { it.isNotBlank() },
+                        updatedAt = c.getLong(6)
                     )
                 )
             }
@@ -200,24 +216,26 @@ object AddressStore {
         return out
     }
 
-    fun updateCode(address: String, zip: String, newCode: String): Boolean {
-        val key = addressKey(address, zip)
-        if (key.isBlank()) return false
+    fun updateCode(id: Long, newCode: String): Boolean {
         val code = newCode.trim()
-        if (code.isEmpty()) return false
+        if (id <= 0 || code.isEmpty()) return false
+        if (!code.matches(Regex("^[A-Za-z0-9*#]+$"))) return false
         val values = ContentValues().apply {
             put("code", code)
             put("updated_at", System.currentTimeMillis())
         }
-        val n = codesDb().update("pk_codes", values, "address_key = ?", arrayOf(key))
-        if (n > 0) bump()
-        return n > 0
+        return try {
+            val n = codesDb().update("pk_codes", values, "id = ?", arrayOf(id.toString()))
+            if (n > 0) bump()
+            n > 0
+        } catch (_: Exception) {
+            false
+        }
     }
 
-    fun deleteCode(address: String, zip: String): Boolean {
-        val key = addressKey(address, zip)
-        if (key.isBlank()) return false
-        val n = codesDb().delete("pk_codes", "address_key = ?", arrayOf(key))
+    fun deleteCode(id: Long): Boolean {
+        if (id <= 0) return false
+        val n = codesDb().delete("pk_codes", "id = ?", arrayOf(id.toString()))
         if (n > 0) bump()
         return n > 0
     }
@@ -309,6 +327,7 @@ object AddressStore {
         return n > 0
     }
 
+    /** Resolve the stored visit key from the label the UI shows, so edits still hit the row. */
     private fun visitKeyForStored(address: String, zip: String, date: String): String? {
         visitsDb().rawQuery(
             "SELECT address_key FROM address_log WHERE address = ? AND zip = ? AND visit_date = ? LIMIT 1",
@@ -319,25 +338,49 @@ object AddressStore {
     }
 
     private fun upsertCode(database: SQLiteDatabase, s: Shipment, code: String, now: Long) {
+        val rec = s.recipient.takeIf { it.isNotBlank() }
         val values = ContentValues().apply {
             put("address_key", addressKey(s))
             put("address", s.address)
             put("zip", s.zip)
             put("city", s.city)
+            put("recipient", rec)
+            put("recipient_key", recipientKey(s.recipient))
             put("code", code)
-            put("recipient", s.recipient.takeIf { it.isNotBlank() })
             put("updated_at", now)
         }
-        database.insertWithOnConflict("pk_codes", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        database.insertWithOnConflict("pk_codes", null, values, SQLiteDatabase.CONFLICT_IGNORE)
     }
 
-    private fun lookupCode(database: SQLiteDatabase, key: String): String? {
-        codesDb().rawQuery(
-            "SELECT code FROM pk_codes WHERE address_key = ? LIMIT 1",
-            arrayOf(key)
+    /**
+     * Recipient entry: recipient must match, and city must match when the entry has one.
+     * Address-only entry: address + zip only.
+     * At most 4 codes.
+     */
+    private fun lookupCodes(database: SQLiteDatabase, s: Shipment): List<String> {
+        val wantRec = recipientKey(s.recipient)
+        val wantCity = cityKey(s.city)
+        val wantAddr = addressKey(s)
+        val found = linkedSetOf<String>()
+        database.rawQuery(
+            "SELECT code, recipient_key, city, address_key FROM pk_codes ORDER BY updated_at DESC",
+            null
         ).use { c ->
-            return if (c.moveToFirst()) c.getString(0) else null
+            while (c.moveToNext() && found.size < 4) {
+                val code = c.getString(0)?.trim().orEmpty()
+                if (code.isEmpty()) continue
+                val rec = c.getString(1).orEmpty()
+                val city = cityKey(c.getString(2).orEmpty())
+                val addr = c.getString(3).orEmpty()
+                val hit = if (rec.isNotBlank()) {
+                    rec == wantRec && (city.isBlank() || city == wantCity)
+                } else {
+                    wantAddr.isNotBlank() && addr == wantAddr
+                }
+                if (hit) found.add(code)
+            }
         }
+        return found.toList()
     }
 
     private fun bump() {
@@ -347,17 +390,29 @@ object AddressStore {
     fun addressKey(s: Shipment): String = addressKey(s.address, s.zip)
 
     fun addressKey(address: String, zip: String): String {
-        val a = address.lowercase()
-            .replace("\u00e5", "a").replace("\u00e4", "a").replace("\u00f6", "o")
-            .replace(Regex("[^a-z0-9]"), "")
+        val a = foldKey(address)
         val z = zip.filter { it.isDigit() }
         if (a.length < 3) return ""
         return "$a|$z"
     }
 
+    fun recipientKey(name: String): String = foldKey(name)
+
+    fun cityKey(city: String): String =
+        foldKey(city).replace(Regex("\\d+$"), "")
+
+    private fun foldKey(raw: String): String =
+        raw.lowercase()
+            .replace("å", "a").replace("ä", "a").replace("ö", "o").replace("é", "e")
+            .replace(Regex("[^a-z0-9]"), "")
+
     private fun isKkb(s: Shipment): Boolean =
         s.carrier.equals("kkb\u00f6j", ignoreCase = true)
 
+    /**
+     * Manual entry-code add. Code is alphanumeric plus *#.
+     * Recipient is optional; when present it is the display name.
+     */
     fun insertManualCode(
         code: String,
         recipient: String?,
@@ -366,24 +421,28 @@ object AddressStore {
         city: String = ""
     ): Boolean {
         val c = code.trim()
+        val rec = recipient?.trim()?.takeIf { it.isNotBlank() }
         val a = address.trim()
         val z = zip.trim()
-        if (c.isEmpty() || a.isEmpty() || z.isEmpty()) return false
+        val cityClean = city.trim()
+        if (c.isEmpty()) return false
         if (!c.matches(Regex("^[A-Za-z0-9*#]+$"))) return false
-        val key = addressKey(a, z)
-        if (key.isBlank()) return false
+        if (rec == null && (a.isEmpty() || z.isEmpty())) return false
+        val key = if (a.isEmpty()) "" else addressKey(a, z)
+        if (rec == null && key.isBlank()) return false
         val values = ContentValues().apply {
             put("address_key", key)
             put("address", a)
             put("zip", z)
-            put("city", city)
+            put("city", cityClean)
             put("code", c)
-            put("recipient", recipient?.trim()?.takeIf { it.isNotBlank() })
+            put("recipient", rec)
+            put("recipient_key", recipientKey(rec.orEmpty()))
             put("updated_at", System.currentTimeMillis())
         }
-        codesDb().insertWithOnConflict("pk_codes", null, values, SQLiteDatabase.CONFLICT_REPLACE)
-        bump()
-        return true
+        val row = codesDb().insertWithOnConflict("pk_codes", null, values, SQLiteDatabase.CONFLICT_IGNORE)
+        if (row >= 0) bump()
+        return row >= 0
     }
 
     /**
@@ -425,23 +484,7 @@ object AddressStore {
 
         private fun ensureSchema(db: SQLiteDatabase) {
             if (isCodes) {
-                db.execSQL(
-                    """
-                    CREATE TABLE IF NOT EXISTS pk_codes (
-                        address_key TEXT PRIMARY KEY,
-                        address TEXT NOT NULL,
-                        zip TEXT,
-                        city TEXT,
-                        code TEXT NOT NULL,
-                        recipient TEXT,
-                        updated_at INTEGER NOT NULL
-                    )
-                    """.trimIndent()
-                )
-                try {
-                    db.execSQL("ALTER TABLE pk_codes ADD COLUMN recipient TEXT")
-                } catch (_: Exception) {
-                }
+                ensureCodes(db)
             } else {
                 db.execSQL(
                     """
@@ -459,6 +502,85 @@ object AddressStore {
                 )
             }
         }
+
+        private fun ensureCodes(db: SQLiteDatabase) {
+            if (tableExists(db, "pk_codes") && !columnExists(db, "pk_codes", "id")) {
+                if (!columnExists(db, "pk_codes", "recipient")) {
+                    db.execSQL("ALTER TABLE pk_codes ADD COLUMN recipient TEXT")
+                }
+                if (!columnExists(db, "pk_codes", "city")) {
+                    db.execSQL("ALTER TABLE pk_codes ADD COLUMN city TEXT")
+                }
+                db.execSQL("ALTER TABLE pk_codes RENAME TO pk_codes_old")
+                createCodes(db)
+                db.execSQL(
+                    """
+                    INSERT INTO pk_codes (address_key, address, zip, city, code, recipient, recipient_key, updated_at)
+                    SELECT address_key, address, IFNULL(zip, ''), IFNULL(city, ''), code,
+                           recipient, '', updated_at
+                    FROM pk_codes_old
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE pk_codes_old")
+                fillRecipientKeys(db)
+            } else {
+                createCodes(db)
+                if (!columnExists(db, "pk_codes", "recipient_key")) {
+                    db.execSQL("ALTER TABLE pk_codes ADD COLUMN recipient_key TEXT NOT NULL DEFAULT ''")
+                    fillRecipientKeys(db)
+                }
+            }
+        }
+
+        private fun createCodes(db: SQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS pk_codes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    address_key TEXT NOT NULL DEFAULT '',
+                    address TEXT,
+                    zip TEXT,
+                    city TEXT,
+                    code TEXT NOT NULL,
+                    recipient TEXT,
+                    recipient_key TEXT NOT NULL DEFAULT '',
+                    updated_at INTEGER NOT NULL
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS pk_codes_unique
+                ON pk_codes(address_key, recipient_key, code)
+                """.trimIndent()
+            )
+        }
+
+        private fun fillRecipientKeys(db: SQLiteDatabase) {
+            db.rawQuery("SELECT id, recipient FROM pk_codes", null).use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getLong(0)
+                    val key = recipientKey(c.getString(1).orEmpty())
+                    val values = ContentValues().apply { put("recipient_key", key) }
+                    db.update("pk_codes", values, "id = ?", arrayOf(id.toString()))
+                }
+            }
+        }
+
+        private fun tableExists(db: SQLiteDatabase, name: String): Boolean =
+            db.rawQuery(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                arrayOf(name)
+            ).use { it.moveToFirst() }
+
+        private fun columnExists(db: SQLiteDatabase, table: String, column: String): Boolean =
+            db.rawQuery("PRAGMA table_info($table)", null).use { c ->
+                val idx = c.getColumnIndex("name")
+                while (c.moveToNext()) {
+                    if (c.getString(idx) == column) return true
+                }
+                false
+            }
     }
 }
 
