@@ -13,7 +13,6 @@ package com.majk.extractor.util
  *   Solar* + F12              → Solar F12
  *   Apoteket Nationella*      → APONAT
  *   TWS*                      → TWS
- *   Onninen* / Kesko*         → Kesko
  */
 object CarrierNames {
 
@@ -39,7 +38,7 @@ object CarrierNames {
                 when {
                     "F12" in upper || "F-12" in upper -> "Solar F12"
                     "F7" in upper || "F-7" in upper -> "Solar F7"
-                    else -> "Solar"
+                    else -> "Solar" // fallback if variant unknown
                 }
             }
             "APONAT" in upper -> "APONAT"
@@ -47,6 +46,8 @@ object CarrierNames {
             "PACKOPLOCK" in upper -> "Packoplock"
             "BEST TRANSPORT" in upper -> "Best Transport"
             "ALLOFFICE" in upper -> "Alloffice"
+            // Terminal operator, not a freight carrier.
+            "ALLTRANSPORT" in upper -> ""
             else -> raw.trim()
         }
     }
