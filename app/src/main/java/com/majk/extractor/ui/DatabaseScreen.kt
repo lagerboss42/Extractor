@@ -44,6 +44,7 @@ fun DatabaseScreen() {
     var showModify by remember { mutableStateOf(false) }
     var showRemove by remember { mutableStateOf(false) }
     var showAddCode by remember { mutableStateOf(false) }
+    var showClearCodes by remember { mutableStateOf(false) }
     var showClearVisits by remember { mutableStateOf(false) }
 
     LaunchedEffect(query, tab, revision) {
@@ -94,7 +95,7 @@ fun DatabaseScreen() {
                 Text("+ Add entry code")
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(codes, key = { "${it.address}|${it.zip}|${it.code}" }) { row ->
+                items(codes, key = { it.id }) { row ->
                     Box {
                         PkCard(
                             row = row,
