@@ -33,6 +33,28 @@ android {
         jvmTarget = "17"
     }
 
+    // Persistent key for CI so later APKs update in place.
+    // Local builds without these env vars keep the default debug key.
+    val keystoreFile = System.getenv("KEYSTORE_FILE")
+    val keystorePassword = System.getenv("KEYSTORE_PASSWORD")
+    val keyAlias = System.getenv("KEY_ALIAS")
+    val keyPassword = System.getenv("KEY_PASSWORD")
+    if (!keystoreFile.isNullOrBlank()) {
+        signingConfigs {
+            create("beta") {
+                storeFile = file(keystoreFile)
+                storePassword = keystorePassword
+                this.keyAlias = keyAlias
+                this.keyPassword = keyPassword
+            }
+        }
+        buildTypes {
+            getByName("debug") {
+                signingConfig = signingConfigs.getByName("beta")
+            }
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
