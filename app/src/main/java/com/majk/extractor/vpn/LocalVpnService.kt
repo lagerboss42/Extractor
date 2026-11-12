@@ -66,7 +66,7 @@ class LocalVpnService : VpnService() {
         try { AppPreferences.init(this) } catch (_: Exception) {}
 
         val builder = Builder()
-            .setSession("ExBeta")
+            .setSession("Extractor")
             .addAddress("10.8.0.2", 32)
             .addRoute("0.0.0.0", 0)
             .addDnsServer("8.8.8.8")
@@ -104,6 +104,8 @@ class LocalVpnService : VpnService() {
             return
         }
 
+        // Keep previously parsed stops across VPN restarts (user can Clear in UI).
+        // Always start a fresh traffic log for this session.
         try {
             FileWriter(logFile, false).use { it.write("=== Extractor Traffic Log ===\n") }
         } catch (_: Exception) {}
@@ -236,6 +238,8 @@ class LocalVpnService : VpnService() {
         if (fromClient) session.appendBounded(session.clientBuffer, text)
         else session.appendBounded(session.serverBuffer, text)
 
+        // Only log/parse Opter-relevant traffic. Package is already restricted,
+        // but TLS and other ports must not be dumped into the log.
         val looksLikeOpter = session.involvesPort81 ||
             text.contains("DEL\t") ||
             text.contains("PSS\t") ||
@@ -251,6 +255,7 @@ class LocalVpnService : VpnService() {
             else -> "← server→client :${session.remotePort}"
         }
 
+        // Log only this chunk, not the growing buffer.
         val entry = buildString {
             appendLine("--------------------------------------------------")
             appendLine("[$timestamp] $direction  (${data.size} bytes)")
@@ -261,6 +266,8 @@ class LocalVpnService : VpnService() {
             FileWriter(logFile, true).use { it.append(entry) }
         } catch (_: Exception) {}
 
+        // Debounce parse: wait for a quiet period so we parse complete responses,
+        // not every fragment. This stops the 60+ phantom stop inflation.
         scheduleParse(session)
     }
 
@@ -278,6 +285,7 @@ class LocalVpnService : VpnService() {
     private fun parseAndStore(text: String) {
         if (text.isBlank()) return
         try {
+            // Full reparse of the accumulated log so live results match a clean load.
             if (logFile.exists()) {
                 CaptureRepository.reparseFromLogFile(logFile)
             } else {
@@ -347,6 +355,7 @@ class LocalVpnService : VpnService() {
         capturing.set(false)
         captureJob?.cancel()
         captureJob = null
+        // Flush any pending parses before closing sessions.
         parseJobs.values.forEach { it.cancel() }
         parseJobs.clear()
         sessions.values.forEach { sess ->
@@ -372,14 +381,14 @@ class LocalVpnService : VpnService() {
     private fun createNotification(content: String): Notification {
         val channelId = "opter_vpn_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "ExBeta", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(channelId, "Extractor", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
         val pi = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, channelId)
-            .setContentTitle("ExBeta")
+            .setContentTitle("Extractor")
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_menu_info_details)
             .setContentIntent(pi)
