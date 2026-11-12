@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, Beta ]
   workflow_dispatch:
 
 jobs:
@@ -23,12 +23,26 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      # No chmod needed, we are using the global gradle installation
+      - name: Decode signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "KEYSTORE_BASE64 secret is missing"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/extractor-beta.jks"
+
       - name: Build debug APK
+        env:
+          KEYSTORE_FILE: ${{ runner.temp }}/extractor-beta.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: gradle assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Extractor-debug
+          name: ${{ github.ref_name }}-debug
           path: app/build/outputs/apk/debug/*.apk

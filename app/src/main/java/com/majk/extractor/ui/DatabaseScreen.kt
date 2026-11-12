@@ -43,6 +43,7 @@ fun DatabaseScreen() {
     var menuTarget by remember { mutableStateOf<DbTarget?>(null) }
     var showModify by remember { mutableStateOf(false) }
     var showRemove by remember { mutableStateOf(false) }
+    var showAddCode by remember { mutableStateOf(false) }
     var showClearCodes by remember { mutableStateOf(false) }
     var showClearVisits by remember { mutableStateOf(false) }
 
@@ -86,6 +87,12 @@ fun DatabaseScreen() {
                 ) {
                     Text("Clear all", color = Color(0xFFFF6B6B))
                 }
+            }
+            Button(
+                onClick = { showAddCode = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("+ Add entry code")
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(codes, key = { "${it.address}|${it.zip}|${it.code}" }) { row ->
@@ -170,6 +177,35 @@ fun DatabaseScreen() {
                 }
             }
         }
+    }
+
+    if (showAddCode) {
+        var code by remember { mutableStateOf("") }
+        var recipient by remember { mutableStateOf("") }
+        var address by remember { mutableStateOf("") }
+        var zip by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showAddCode = false },
+            title = { Text("Add entry code") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = code, onValueChange = { code = it }, label = { Text("Code (*# allowed)") }, singleLine = true)
+                    OutlinedTextField(value = recipient, onValueChange = { recipient = it }, label = { Text("Recipient (optional)") }, singleLine = true)
+                    OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Address") }, singleLine = true)
+                    OutlinedTextField(value = zip, onValueChange = { zip = it }, label = { Text("Zip") }, singleLine = true)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (AddressStore.insertManualCode(code, recipient.ifBlank { null }, address, zip)) {
+                        showAddCode = false
+                    }
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddCode = false }) { Text("Cancel") }
+            }
+        )
     }
 
     if (showClearCodes) {
@@ -277,7 +313,10 @@ private fun PkCard(row: PkEntry, onLongPress: () -> Unit) {
             )
     ) {
         Column(Modifier.padding(12.dp)) {
-            Text(row.address, style = MaterialTheme.typography.titleSmall)
+            Text(row.recipient ?: row.address, style = MaterialTheme.typography.titleSmall)
+            if (row.recipient != null) {
+                Text(row.address, style = MaterialTheme.typography.bodySmall)
+            }
             Text(
                 listOf(row.zip, row.city).filter { it.isNotBlank() }.joinToString(" "),
                 style = MaterialTheme.typography.bodySmall

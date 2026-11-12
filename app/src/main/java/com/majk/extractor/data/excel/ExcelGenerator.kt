@@ -103,6 +103,7 @@ object ExcelGenerator {
         sb.append("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>""")
         sb.append("""<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">""")
         sb.append("""<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>""")
+        sb.append(colsXml(headers, shipments))
         sb.append("""<sheetData>""")
 
         sb.append("""<row r="1">""")
@@ -114,15 +115,7 @@ object ExcelGenerator {
 
         shipments.forEachIndexed { rowIdx, s ->
             val r = rowIdx + 2
-            val values = listOf(
-                s.toTimeFrameColumn(),
-                s.excelRecipient(),
-                s.address,
-                s.zip,
-                s.city,
-                s.toInfoColumn(),
-                s.excelCoordsColumn()
-            )
+            val values = rowValues(s)
             val styleAttr = if (s.type == ShipmentType.PICK) """ s="2"""" else ""
             sb.append("""<row r="$r">""")
             values.forEachIndexed { i, v ->
@@ -141,6 +134,38 @@ object ExcelGenerator {
         sb.append("</worksheet>")
         return sb.toString()
     }
+
+    /**
+     * xlsx has no live auto-fit. Width is the longest cell in the column
+     * (header included), in Excel character units, with a small pad and a cap.
+     */
+    private fun colsXml(headers: List<String>, shipments: List<Shipment>): String {
+        val widths = headers.indices.map { col ->
+            val headerLen = headers[col].length
+            val dataLen = shipments.maxOfOrNull { rowValues(it)[col].length } ?: 0
+            val maxLen = maxOf(headerLen, dataLen)
+            ((maxLen * 1.15) + 2.0).coerceIn(8.0, 60.0)
+        }
+        val sb = StringBuilder()
+        sb.append("<cols>")
+        widths.forEachIndexed { i, w ->
+            val width = String.format(java.util.Locale.US, "%.2f", w)
+            val col = i + 1
+            sb.append("""<col min="$col" max="$col" width="$width" bestFit="1" customWidth="1"/>""")
+        }
+        sb.append("</cols>")
+        return sb.toString()
+    }
+
+    private fun rowValues(s: Shipment): List<String> = listOf(
+        s.toTimeFrameColumn(),
+        s.excelRecipient(),
+        s.address,
+        s.zip,
+        s.city,
+        s.toInfoColumn(),
+        s.excelCoordsColumn()
+    )
 
     private fun cellRef(col: Int, rowZeroBased: Int): String {
         var c = col

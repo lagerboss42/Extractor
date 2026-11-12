@@ -11,6 +11,7 @@ data class PkEntry(
     val zip: String,
     val city: String,
     val code: String,
+    val recipient: String?,
     val updatedAt: Long
 )
 
@@ -26,6 +27,7 @@ data class VisitEntry(
 /**
  * Persistent port codes and per-address visit log.
  * Same calendar day is overwritten (regenerating Excel does not double-count).
+ * Separate SQLite files for entry codes and visits.
  */
 object AddressStore {
 
@@ -33,21 +35,30 @@ object AddressStore {
     var revision: Int = 0
         private set
 
-    private var helper: Helper? = null
+    private var codesHelper: Helper? = null
+    private var visitsHelper: Helper? = null
 
     fun init(context: Context) {
-        if (helper == null) {
-            helper = Helper(context.applicationContext)
+        if (codesHelper == null) {
+            codesHelper = Helper(context.applicationContext, "entry_codes.db", true)
+        }
+        if (visitsHelper == null) {
+            visitsHelper = Helper(context.applicationContext, "visits.db", false)
         }
     }
 
-    private fun db(): SQLiteDatabase {
-        val h = helper ?: error("AddressStore not initialised")
+    private fun codesDb(): SQLiteDatabase {
+        val h = codesHelper ?: error("AddressStore codes not initialised")
+        return h.writable()
+    }
+
+    private fun visitsDb(): SQLiteDatabase {
+        val h = visitsHelper ?: error("AddressStore visits not initialised")
         return h.writable()
     }
 
     fun applyPortkods(shipments: List<Shipment>): List<Shipment> {
-        val database = db()
+        val database = codesDb()
         val now = System.currentTimeMillis()
         return shipments.map { s ->
             if (isKkb(s) || addressKey(s).isBlank()) return@map s
@@ -68,7 +79,7 @@ object AddressStore {
     }
 
     fun recordVisits(shipments: List<Shipment>) {
-        val database = db()
+        val database = visitsDb()
         val today = LocalDate.now().toString()
         val groups = shipments
             .filter { !isKkb(it) && visitKey(it).isNotBlank() }
@@ -101,13 +112,6 @@ object AddressStore {
         bump()
     }
 
-    /**
-     * Visit identity:
-     *  - Port K / D / F and Cloetta: one ID per consolidated site (and type).
-     *  - Region: group by address.
-     *  - Everything else: one group per unique recipient.
-     * Every shipment in the group adds to the count and weight.
-     */
     private fun visitKey(s: Shipment): String {
         val rec = s.recipient.trim()
         val port = when {
@@ -147,13 +151,13 @@ object AddressStore {
     fun searchCodes(query: String): List<PkEntry> {
         val q = "%${query.trim()}%"
         val sql = """
-            SELECT address, zip, city, code, updated_at
+            SELECT address, zip, city, code, recipient, updated_at
             FROM pk_codes
-            WHERE address LIKE ? OR zip LIKE ? OR city LIKE ? OR code LIKE ?
-            ORDER BY address COLLATE NOCASE
+            WHERE address LIKE ? OR zip LIKE ? OR city LIKE ? OR code LIKE ? OR recipient LIKE ?
+            ORDER BY COALESCE(recipient, address) COLLATE NOCASE
         """.trimIndent()
         val out = mutableListOf<PkEntry>()
-        db().rawQuery(sql, arrayOf(q, q, q, q)).use { c ->
+        codesDb().rawQuery(sql, arrayOf(q, q, q, q, q)).use { c ->
             while (c.moveToNext()) {
                 out.add(
                     PkEntry(
@@ -161,7 +165,8 @@ object AddressStore {
                         zip = c.getString(1).orEmpty(),
                         city = c.getString(2).orEmpty(),
                         code = c.getString(3),
-                        updatedAt = c.getLong(4)
+                        recipient = c.getString(4)?.takeIf { it.isNotBlank() },
+                        updatedAt = c.getLong(5)
                     )
                 )
             }
@@ -178,7 +183,7 @@ object AddressStore {
             ORDER BY visit_date DESC, address COLLATE NOCASE
         """.trimIndent()
         val out = mutableListOf<VisitEntry>()
-        db().rawQuery(sql, arrayOf(q, q, q)).use { c ->
+        visitsDb().rawQuery(sql, arrayOf(q, q, q)).use { c ->
             while (c.moveToNext()) {
                 out.add(
                     VisitEntry(
@@ -204,7 +209,7 @@ object AddressStore {
             put("code", code)
             put("updated_at", System.currentTimeMillis())
         }
-        val n = db().update("pk_codes", values, "address_key = ?", arrayOf(key))
+        val n = codesDb().update("pk_codes", values, "address_key = ?", arrayOf(key))
         if (n > 0) bump()
         return n > 0
     }
@@ -212,19 +217,19 @@ object AddressStore {
     fun deleteCode(address: String, zip: String): Boolean {
         val key = addressKey(address, zip)
         if (key.isBlank()) return false
-        val n = db().delete("pk_codes", "address_key = ?", arrayOf(key))
+        val n = codesDb().delete("pk_codes", "address_key = ?", arrayOf(key))
         if (n > 0) bump()
         return n > 0
     }
 
     fun clearCodes(): Int {
-        val n = db().delete("pk_codes", null, null)
+        val n = codesDb().delete("pk_codes", null, null)
         if (n > 0) bump()
         return n
     }
 
     fun clearVisits(): Int {
-        val n = db().delete("address_log", null, null)
+        val n = visitsDb().delete("address_log", null, null)
         if (n > 0) bump()
         return n
     }
@@ -240,7 +245,7 @@ object AddressStore {
         val key = visitKeyForStored(address, zip, oldDate) ?: return false
         val date = newDate.trim()
         if (date.isEmpty() || shipments < 0 || totalWeight < 0) return false
-        val database = db()
+        val database = visitsDb()
         if (date == oldDate) {
             val values = ContentValues().apply {
                 put("shipments", shipments)
@@ -295,7 +300,7 @@ object AddressStore {
 
     fun deleteVisit(address: String, zip: String, date: String): Boolean {
         val key = visitKeyForStored(address, zip, date) ?: return false
-        val n = db().delete(
+        val n = visitsDb().delete(
             "address_log",
             "address_key = ? AND visit_date = ?",
             arrayOf(key, date)
@@ -304,9 +309,8 @@ object AddressStore {
         return n > 0
     }
 
-    /** Resolve the stored visit key from the label the UI shows, so edits still hit the row. */
     private fun visitKeyForStored(address: String, zip: String, date: String): String? {
-        db().rawQuery(
+        visitsDb().rawQuery(
             "SELECT address_key FROM address_log WHERE address = ? AND zip = ? AND visit_date = ? LIMIT 1",
             arrayOf(address, zip, date)
         ).use { c ->
@@ -321,13 +325,14 @@ object AddressStore {
             put("zip", s.zip)
             put("city", s.city)
             put("code", code)
+            put("recipient", s.recipient.takeIf { it.isNotBlank() })
             put("updated_at", now)
         }
         database.insertWithOnConflict("pk_codes", null, values, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
     private fun lookupCode(database: SQLiteDatabase, key: String): String? {
-        database.rawQuery(
+        codesDb().rawQuery(
             "SELECT code FROM pk_codes WHERE address_key = ? LIMIT 1",
             arrayOf(key)
         ).use { c ->
@@ -353,13 +358,45 @@ object AddressStore {
     private fun isKkb(s: Shipment): Boolean =
         s.carrier.equals("kkb\u00f6j", ignoreCase = true)
 
+    fun insertManualCode(
+        code: String,
+        recipient: String?,
+        address: String,
+        zip: String,
+        city: String = ""
+    ): Boolean {
+        val c = code.trim()
+        val a = address.trim()
+        val z = zip.trim()
+        if (c.isEmpty() || a.isEmpty() || z.isEmpty()) return false
+        if (!c.matches(Regex("^[A-Za-z0-9*#]+$"))) return false
+        val key = addressKey(a, z)
+        if (key.isBlank()) return false
+        val values = ContentValues().apply {
+            put("address_key", key)
+            put("address", a)
+            put("zip", z)
+            put("city", city)
+            put("code", c)
+            put("recipient", recipient?.trim()?.takeIf { it.isNotBlank() })
+            put("updated_at", System.currentTimeMillis())
+        }
+        codesDb().insertWithOnConflict("pk_codes", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        bump()
+        return true
+    }
+
     /**
-     * Database lives at /storage/emulated/0/Extractor/extractor.db so it survives
-     * uninstall and is browsable. On first run, copies the old internal file across.
+     * Database files live under /storage/emulated/0/Extractor/ so they survive
+     * uninstall and are browsable. Separate files for entry codes and visits.
      */
-    private class Helper(private val context: Context) {
+    private class Helper(
+        private val context: Context,
+        private val dbName: String,
+        private val isCodes: Boolean
+    ) {
         private val dir = java.io.File("/storage/emulated/0/Extractor")
-        private val file = java.io.File(dir, "extractor.db")
+        private val file = java.io.File(dir, dbName)
         private var database: SQLiteDatabase? = null
 
         @Synchronized
@@ -374,7 +411,6 @@ object AddressStore {
         private fun openExternal(): SQLiteDatabase? {
             return try {
                 if (!dir.exists() && !dir.mkdirs()) return null
-                migrateFromInternal()
                 SQLiteDatabase.openOrCreateDatabase(file, null)
             } catch (_: Exception) {
                 null
@@ -382,48 +418,46 @@ object AddressStore {
         }
 
         private fun openInternal(): SQLiteDatabase {
-            val old = context.getDatabasePath("extractor.db")
+            val old = context.getDatabasePath(dbName)
             old.parentFile?.mkdirs()
             return SQLiteDatabase.openOrCreateDatabase(old, null)
         }
 
-        private fun migrateFromInternal() {
-            if (file.exists()) return
-            val old = context.getDatabasePath("extractor.db")
-            if (!old.exists()) return
-            try {
-                old.copyTo(file, overwrite = false)
-            } catch (_: Exception) {
-            }
-        }
-
         private fun ensureSchema(db: SQLiteDatabase) {
-            db.execSQL(
-                """
-                CREATE TABLE IF NOT EXISTS pk_codes (
-                    address_key TEXT PRIMARY KEY,
-                    address TEXT NOT NULL,
-                    zip TEXT,
-                    city TEXT,
-                    code TEXT NOT NULL,
-                    updated_at INTEGER NOT NULL
+            if (isCodes) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS pk_codes (
+                        address_key TEXT PRIMARY KEY,
+                        address TEXT NOT NULL,
+                        zip TEXT,
+                        city TEXT,
+                        code TEXT NOT NULL,
+                        recipient TEXT,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """.trimIndent()
                 )
-                """.trimIndent()
-            )
-            db.execSQL(
-                """
-                CREATE TABLE IF NOT EXISTS address_log (
-                    address_key TEXT NOT NULL,
-                    address TEXT NOT NULL,
-                    zip TEXT,
-                    city TEXT,
-                    shipments INTEGER NOT NULL,
-                    total_weight INTEGER NOT NULL,
-                    visit_date TEXT NOT NULL,
-                    PRIMARY KEY (address_key, visit_date)
+                try {
+                    db.execSQL("ALTER TABLE pk_codes ADD COLUMN recipient TEXT")
+                } catch (_: Exception) {
+                }
+            } else {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS address_log (
+                        address_key TEXT NOT NULL,
+                        address TEXT NOT NULL,
+                        zip TEXT,
+                        city TEXT,
+                        shipments INTEGER NOT NULL,
+                        total_weight INTEGER NOT NULL,
+                        visit_date TEXT NOT NULL,
+                        PRIMARY KEY (address_key, visit_date)
+                    )
+                    """.trimIndent()
                 )
-                """.trimIndent()
-            )
+            }
         }
     }
 }

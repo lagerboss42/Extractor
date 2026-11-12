@@ -8,11 +8,11 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.majk.extractor"
+        applicationId = "com.majk.exbeta"
         minSdk = 26
         targetSdk = 35
-        versionCode = 29
-        versionName = "0.4.11a"
+        versionCode = 31
+        versionName = "0.5.1b"
     }
 
     buildFeatures {
@@ -33,6 +33,28 @@ android {
         jvmTarget = "17"
     }
 
+    // Persistent key for CI so later APKs update in place.
+    // Local builds without these env vars keep the default debug key.
+    val keystoreFile = System.getenv("KEYSTORE_FILE")
+    val keystorePassword = System.getenv("KEYSTORE_PASSWORD")
+    val keyAlias = System.getenv("KEY_ALIAS")
+    val keyPassword = System.getenv("KEY_PASSWORD")
+    if (!keystoreFile.isNullOrBlank()) {
+        signingConfigs {
+            create("beta") {
+                storeFile = file(keystoreFile)
+                storePassword = keystorePassword
+                this.keyAlias = keyAlias
+                this.keyPassword = keyPassword
+            }
+        }
+        buildTypes {
+            getByName("debug") {
+                signingConfig = signingConfigs.getByName("beta")
+            }
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -48,6 +70,7 @@ dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.10.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
 

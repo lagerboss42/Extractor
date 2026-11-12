@@ -313,7 +313,8 @@ object ManifestCleaner {
             lat = null,
             lon = null,
             earliestMinutes = group.mapNotNull { it.earliestMinutes }.minOrNull(),
-            latestMinutes = group.mapNotNull { it.latestMinutes }.maxOrNull()
+            // Earliest of the latest-times: a stop is due at the first deadline.
+            latestMinutes = group.mapNotNull { it.latestMinutes }.minOrNull()
         )
     }
 
@@ -364,7 +365,8 @@ object ManifestCleaner {
             lon = lon,
             earliestMinutes = group.mapNotNull { it.earliestMinutes }.minOrNull()
                 ?: first.earliestMinutes,
-            latestMinutes = group.mapNotNull { it.latestMinutes }.maxOrNull()
+            // Earliest of the latest-times when a stop has more than one shipment.
+            latestMinutes = group.mapNotNull { it.latestMinutes }.minOrNull()
                 ?: first.latestMinutes,
             consolidated = false
         )
