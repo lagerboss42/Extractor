@@ -68,6 +68,7 @@ fun MainScreen() {
     }
 
     fun actuallyStartVpn() {
+        // Fail closed in the UI too — service refuses, but don't claim VPN is running.
         val opterInstalled = try {
             context.packageManager.getPackageInfo("com.opter.driver", 0)
             true
@@ -85,7 +86,7 @@ fun MainScreen() {
                 }
                 context.startForegroundService(intent)
                 vpnRunning = true
-                status = "Capture started – open Opter Driver"
+                status = "VPN started – open Opter Driver"
             } catch (e: Exception) {
                 status = "VPN start failed: ${e.message}"
             }
@@ -108,6 +109,7 @@ fun MainScreen() {
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
             try {
+                // Preserve extension so .pcap is not parsed as text.
                 val name = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
                     val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                     if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
@@ -283,7 +285,7 @@ fun MainScreen() {
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("ExBeta", style = MaterialTheme.typography.headlineMedium)
+        Text("Extractor", style = MaterialTheme.typography.headlineMedium)
         Text(status, style = MaterialTheme.typography.bodyMedium)
 
         Row(
