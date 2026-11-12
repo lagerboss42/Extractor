@@ -11,6 +11,7 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.majk.extractor.MainActivity
+import com.majk.extractor.data.parser.OpterHttpParser
 import com.majk.extractor.data.prefs.AppPreferences
 import com.majk.extractor.data.storage.UserDataStore
 import kotlinx.coroutines.*
