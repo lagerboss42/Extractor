@@ -22,19 +22,34 @@ import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import com.majk.extractor.data.db.AddressStore
+import com.majk.extractor.data.prefs.AppPreferences
+import com.majk.extractor.data.storage.UserDataStore
 import com.majk.extractor.vpn.CaptureRepository
 import com.majk.extractor.ui.DatabaseScreen
 import com.majk.extractor.ui.MainScreen
+import com.majk.extractor.ui.SettingsScreen
 import com.majk.extractor.ui.theme.ExtractorTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AddressStore.init(this)
+        AppPreferences.init(this)
+        UserDataStore.init(this)
         CaptureRepository.init(this)
         requestStorageAccess()
         try {
@@ -48,45 +63,58 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     var tab by rememberSaveable { mutableIntStateOf(0) }
+                    var showSettings by remember { mutableStateOf(false) }
                     Column(Modifier.fillMaxSize().systemBarsPadding()) {
-                        TabRow(
-                            selectedTabIndex = tab,
-                            modifier = Modifier.fillMaxWidth(),
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            contentColor = MaterialTheme.colorScheme.primary,
-                            indicator = { positions ->
-                                if (tab < positions.size) {
-                                    TabRowDefaults.SecondaryIndicator(
-                                        Modifier.tabIndicatorOffset(positions[tab]),
-                                        color = MaterialTheme.colorScheme.primary
+                        if (showSettings) {
+                            SettingsScreen(onBack = { showSettings = false })
+                        } else {
+                            Box(Modifier.fillMaxWidth()) {
+                                TabRow(
+                                    selectedTabIndex = tab,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    containerColor = MaterialTheme.colorScheme.surface,
+                                    contentColor = MaterialTheme.colorScheme.primary,
+                                    indicator = { positions ->
+                                        if (tab < positions.size) {
+                                            TabRowDefaults.SecondaryIndicator(
+                                                Modifier.tabIndicatorOffset(positions[tab]),
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                ) {
+                                    Tab(
+                                        selected = tab == 0,
+                                        onClick = { tab = 0 },
+                                        text = {
+                                            Text(
+                                                "Manifest",
+                                                color = if (tab == 0) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
                                     )
+                                    Tab(
+                                        selected = tab == 1,
+                                        onClick = { tab = 1 },
+                                        text = {
+                                            Text(
+                                                "Database",
+                                                color = if (tab == 1) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { showSettings = true },
+                                    modifier = Modifier.align(Alignment.CenterEnd).padding(end = 4.dp)
+                                ) {
+                                    Icon(Icons.Default.Settings, contentDescription = "Settings")
                                 }
                             }
-                        ) {
-                            Tab(
-                                selected = tab == 0,
-                                onClick = { tab = 0 },
-                                text = {
-                                    Text(
-                                        "Manifest",
-                                        color = if (tab == 0) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                            )
-                            Tab(
-                                selected = tab == 1,
-                                onClick = { tab = 1 },
-                                text = {
-                                    Text(
-                                        "Database",
-                                        color = if (tab == 1) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                            )
+                            if (tab == 0) MainScreen() else DatabaseScreen()
                         }
-                        if (tab == 0) MainScreen() else DatabaseScreen()
                     }
                 }
             }
