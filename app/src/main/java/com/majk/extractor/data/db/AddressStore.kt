@@ -394,7 +394,8 @@ object AddressStore {
     fun addressKey(s: Shipment): String = addressKey(s.address, s.zip)
 
     fun addressKey(address: String, zip: String): String {
-        val a = foldKey(address)
+        // Drop a trailing entrance letter: 13A and 13 are the same door.
+        val a = foldKey(address).replace(Regex("(\\d)[a-z]$"), "$1")
         val z = zip.filter { it.isDigit() }
         if (a.length < 3) return ""
         return "$a|$z"
