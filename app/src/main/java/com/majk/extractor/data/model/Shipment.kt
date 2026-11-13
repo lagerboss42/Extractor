@@ -79,7 +79,7 @@ data class Shipment(
             val codes = portkod.split(",").map { it.trim() }.filter { it.isNotEmpty() }.take(4)
             if (codes.isNotEmpty()) {
                 parts.add(
-                    if (portkodRemembered) "/ pk ${codes.joinToString(", ")} /"
+                    if (portkodRemembered) "pk ${codes.joinToString(", ")}"
                     else "PK ${codes.joinToString(", ")}"
                 )
             }
