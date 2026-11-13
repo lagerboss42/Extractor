@@ -363,7 +363,7 @@ object AddressStore {
         val wantAddr = addressKey(s)
         val found = linkedSetOf<String>()
         database.rawQuery(
-            "SELECT code, recipient_key, city, address_key FROM pk_codes ORDER BY updated_at DESC",
+            "SELECT code, recipient_key, city, address, zip FROM pk_codes ORDER BY updated_at DESC",
             null
         ).use { c ->
             while (c.moveToNext() && found.size < 4) {
@@ -371,7 +371,7 @@ object AddressStore {
                 if (code.isEmpty()) continue
                 val rec = c.getString(1).orEmpty()
                 val city = cityKey(c.getString(2).orEmpty())
-                val addr = c.getString(3).orEmpty()
+                val addr = addressKey(c.getString(3).orEmpty(), c.getString(4).orEmpty())
                 val hit = if (rec.isNotBlank()) {
                     rec == wantRec && (city.isBlank() || city == wantCity)
                 } else {
@@ -401,10 +401,13 @@ object AddressStore {
     fun cityKey(city: String): String =
         foldKey(city).replace(Regex("\\d+$"), "")
 
-    private fun foldKey(raw: String): String =
-        raw.lowercase()
+    private fun foldKey(raw: String): String {
+        val nfd = java.text.Normalizer.normalize(raw, java.text.Normalizer.Form.NFD)
+        return nfd.lowercase()
             .replace("å", "a").replace("ä", "a").replace("ö", "o").replace("é", "e")
+            .replace(Regex("\\p{M}+"), "")
             .replace(Regex("[^a-z0-9]"), "")
+    }
 
     private fun isKkb(s: Shipment): Boolean =
         s.carrier.equals("kkb\u00f6j", ignoreCase = true)
@@ -530,6 +533,7 @@ object AddressStore {
                     fillRecipientKeys(db)
                 }
             }
+            rekeyAddresses(db)
         }
 
         private fun createCodes(db: SQLiteDatabase) {
@@ -562,6 +566,17 @@ object AddressStore {
                     val id = c.getLong(0)
                     val key = recipientKey(c.getString(1).orEmpty())
                     val values = ContentValues().apply { put("recipient_key", key) }
+                    db.update("pk_codes", values, "id = ?", arrayOf(id.toString()))
+                }
+            }
+        }
+
+        private fun rekeyAddresses(db: SQLiteDatabase) {
+            db.rawQuery("SELECT id, address, zip FROM pk_codes", null).use { c ->
+                while (c.moveToNext()) {
+                    val id = c.getLong(0)
+                    val key = addressKey(c.getString(1).orEmpty(), c.getString(2).orEmpty())
+                    val values = ContentValues().apply { put("address_key", key) }
                     db.update("pk_codes", values, "id = ?", arrayOf(id.toString()))
                 }
             }
