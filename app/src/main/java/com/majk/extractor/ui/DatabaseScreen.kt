@@ -1,6 +1,7 @@
 package com.majk.extractor.ui
 
-import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -95,7 +96,7 @@ fun DatabaseScreen() {
                 Text("+ Add entry code")
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(codes, key = { "${it.address}|${it.zip}|${it.code}" }) { row ->
+                items(codes, key = { it.id }) { row ->
                     Box {
                         PkCard(
                             row = row,
@@ -184,23 +185,32 @@ fun DatabaseScreen() {
         var recipient by remember { mutableStateOf("") }
         var address by remember { mutableStateOf("") }
         var zip by remember { mutableStateOf("") }
+        var city by remember { mutableStateOf("") }
+        val canSave = code.isNotBlank() && (recipient.isNotBlank() || (address.isNotBlank() && zip.isNotBlank()))
         AlertDialog(
             onDismissRequest = { showAddCode = false },
             title = { Text("Add entry code") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                     OutlinedTextField(value = code, onValueChange = { code = it }, label = { Text("Code (*# allowed)") }, singleLine = true)
                     OutlinedTextField(value = recipient, onValueChange = { recipient = it }, label = { Text("Recipient (optional)") }, singleLine = true)
                     OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Address") }, singleLine = true)
                     OutlinedTextField(value = zip, onValueChange = { zip = it }, label = { Text("Zip") }, singleLine = true)
+                    OutlinedTextField(value = city, onValueChange = { city = it }, label = { Text("City") }, singleLine = true)
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    if (AddressStore.insertManualCode(code, recipient.ifBlank { null }, address, zip)) {
-                        showAddCode = false
-                    }
-                }) { Text("Save") }
+                TextButton(
+                    onClick = {
+                        if (AddressStore.insertManualCode(code, recipient.ifBlank { null }, address, zip, city)) {
+                            showAddCode = false
+                        }
+                    },
+                    enabled = canSave
+                ) { Text("Save") }
             },
             dismissButton = {
                 TextButton(onClick = { showAddCode = false }) { Text("Cancel") }
@@ -239,10 +249,13 @@ fun DatabaseScreen() {
                     showModify = false
                     menuTarget = null
                 },
-                onSave = { newCode ->
-                    AddressStore.updateCode(t.entry.address, t.entry.zip, newCode)
-                    showModify = false
-                    menuTarget = null
+                onSave = { code, recipient, address, zip, city ->
+                    val ok = AddressStore.updateCode(t.entry.id, code, recipient, address, zip, city)
+                    if (ok) {
+                        showModify = false
+                        menuTarget = null
+                    }
+                    ok
                 }
             )
             is DbTarget.Visit -> ModifyVisitDialog(
@@ -251,17 +264,23 @@ fun DatabaseScreen() {
                     showModify = false
                     menuTarget = null
                 },
-                onSave = { shipments, weight, date ->
-                    AddressStore.updateVisit(
+                onSave = { address, zip, city, shipments, weight, date ->
+                    val ok = AddressStore.updateVisit(
                         t.entry.address,
                         t.entry.zip,
                         t.entry.date,
+                        address,
+                        zip,
+                        city,
                         shipments,
                         weight,
                         date
                     )
-                    showModify = false
-                    menuTarget = null
+                    if (ok) {
+                        showModify = false
+                        menuTarget = null
+                    }
+                    ok
                 }
             )
             null -> {}
@@ -278,7 +297,7 @@ fun DatabaseScreen() {
                     menuTarget = null
                 },
                 onConfirmed = {
-                    AddressStore.deleteCode(t.entry.address, t.entry.zip)
+                    AddressStore.deleteCode(t.entry.id)
                     showRemove = false
                     menuTarget = null
                 }
@@ -360,29 +379,40 @@ private fun VisitCard(row: VisitEntry, onLongPress: () -> Unit) {
 private fun ModifyCodeDialog(
     entry: PkEntry,
     onDismiss: () -> Unit,
-    onSave: (String) -> Unit
+    onSave: (code: String, recipient: String?, address: String, zip: String, city: String) -> Boolean
 ) {
     var code by remember { mutableStateOf(entry.code) }
-    val valid = code.trim().isNotEmpty()
+    var recipient by remember { mutableStateOf(entry.recipient.orEmpty()) }
+    var address by remember { mutableStateOf(entry.address) }
+    var zip by remember { mutableStateOf(entry.zip) }
+    var city by remember { mutableStateOf(entry.city) }
+    val canSave = code.isNotBlank() &&
+        code.trim().matches(Regex("^[A-Za-z0-9*#]+$")) &&
+        (recipient.isNotBlank() || (address.isNotBlank() && zip.isNotBlank()))
+    var error by remember { mutableStateOf<String?>(null) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Modify entry code") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(entry.address, style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(
-                    value = code,
-                    onValueChange = { code = it },
-                    label = { Text("PK") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(value = code, onValueChange = { code = it }, label = { Text("Code (*# allowed)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = recipient, onValueChange = { recipient = it }, label = { Text("Recipient (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = zip, onValueChange = { zip = it }, label = { Text("Zip") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = city, onValueChange = { city = it }, label = { Text("City") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (error != null) Text(error!!, color = Color(0xFFFF6B6B), style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onSave(code.trim()) },
-                enabled = valid
+                onClick = {
+                    val ok = onSave(code.trim(), recipient.trim().ifBlank { null }, address.trim(), zip.trim(), city.trim())
+                    if (!ok) error = "Could not save. A row with the same address, recipient and code may already exist."
+                },
+                enabled = canSave
             ) { Text("Save") }
         },
         dismissButton = {
@@ -395,23 +425,33 @@ private fun ModifyCodeDialog(
 private fun ModifyVisitDialog(
     entry: VisitEntry,
     onDismiss: () -> Unit,
-    onSave: (shipments: Int, weight: Int, date: String) -> Unit
+    onSave: (address: String, zip: String, city: String, shipments: Int, weight: Int, date: String) -> Boolean
 ) {
+    var address by remember { mutableStateOf(entry.address) }
+    var zip by remember { mutableStateOf(entry.zip) }
+    var city by remember { mutableStateOf(entry.city) }
     var shipments by remember { mutableStateOf(entry.shipments.toString()) }
     var weight by remember { mutableStateOf(entry.totalWeight.toString()) }
     var date by remember { mutableStateOf(entry.date) }
     val shipInt = shipments.toIntOrNull()
     val weightInt = weight.toIntOrNull()
-    val valid = shipInt != null && shipInt >= 0 &&
+    val valid = address.isNotBlank() &&
+        shipInt != null && shipInt >= 0 &&
         weightInt != null && weightInt >= 0 &&
         date.trim().matches(Regex("""\d{4}-\d{2}-\d{2}"""))
+    var error by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Modify visit") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(entry.address, style = MaterialTheme.typography.bodySmall)
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = zip, onValueChange = { zip = it }, label = { Text("Zip") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = city, onValueChange = { city = it }, label = { Text("City") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(
                     value = shipments,
                     onValueChange = { shipments = it.filter { ch -> ch.isDigit() } },
@@ -435,11 +475,15 @@ private fun ModifyVisitDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (error != null) Text(error!!, color = Color(0xFFFF6B6B), style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onSave(shipInt!!, weightInt!!, date.trim()) },
+                onClick = {
+                    val ok = onSave(address.trim(), zip.trim(), city.trim(), shipInt!!, weightInt!!, date.trim())
+                    if (!ok) error = "Could not save. That date may already exist for this visit."
+                },
                 enabled = valid
             ) { Text("Save") }
         },
