@@ -216,12 +216,32 @@ object AddressStore {
         return out
     }
 
-    fun updateCode(id: Long, newCode: String): Boolean {
-        val code = newCode.trim()
-        if (id <= 0 || code.isEmpty()) return false
-        if (!code.matches(Regex("^[A-Za-z0-9*#]+$"))) return false
+    fun updateCode(
+        id: Long,
+        code: String,
+        recipient: String?,
+        address: String,
+        zip: String,
+        city: String
+    ): Boolean {
+        val c = code.trim()
+        val rec = recipient?.trim()?.takeIf { it.isNotBlank() }
+        val a = address.trim()
+        val z = zip.trim()
+        val cityClean = city.trim()
+        if (id <= 0 || c.isEmpty()) return false
+        if (!c.matches(Regex("^[A-Za-z0-9*#]+$"))) return false
+        if (rec == null && (a.isEmpty() || z.isEmpty())) return false
+        val key = if (a.isEmpty()) "" else addressKey(a, z)
+        if (rec == null && key.isBlank()) return false
         val values = ContentValues().apply {
-            put("code", code)
+            put("address_key", key)
+            put("address", a)
+            put("zip", z)
+            put("city", cityClean)
+            put("code", c)
+            put("recipient", rec)
+            put("recipient_key", recipientKey(rec.orEmpty()))
             put("updated_at", System.currentTimeMillis())
         }
         return try {
@@ -253,22 +273,34 @@ object AddressStore {
     }
 
     fun updateVisit(
+        oldAddress: String,
+        oldZip: String,
+        oldDate: String,
         address: String,
         zip: String,
-        oldDate: String,
+        city: String,
         shipments: Int,
         totalWeight: Int,
         newDate: String
     ): Boolean {
-        val key = visitKeyForStored(address, zip, oldDate) ?: return false
+        val key = visitKeyForStored(oldAddress, oldZip, oldDate) ?: return false
         val date = newDate.trim()
-        if (date.isEmpty() || shipments < 0 || totalWeight < 0) return false
+        val addr = address.trim()
+        val z = zip.trim()
+        val cityClean = city.trim()
+        if (date.isEmpty() || !date.matches(Regex("""\d{4}-\d{2}-\d{2}"""))) return false
+        if (addr.isEmpty() || shipments < 0 || totalWeight < 0) return false
         val database = visitsDb()
-        if (date == oldDate) {
-            val values = ContentValues().apply {
-                put("shipments", shipments)
-                put("total_weight", totalWeight)
-            }
+        if (date != oldDate && visitExists(database, key, date)) return false
+        val values = ContentValues().apply {
+            put("address", addr)
+            put("zip", z)
+            put("city", cityClean)
+            put("shipments", shipments)
+            put("total_weight", totalWeight)
+            put("visit_date", date)
+        }
+        return try {
             val n = database.update(
                 "address_log",
                 values,
@@ -276,45 +308,17 @@ object AddressStore {
                 arrayOf(key, oldDate)
             )
             if (n > 0) bump()
-            return n > 0
+            n > 0
+        } catch (_: Exception) {
+            false
         }
-        database.beginTransaction()
-        try {
-            val cur = database.rawQuery(
-                "SELECT address, zip, city FROM address_log WHERE address_key = ? AND visit_date = ? LIMIT 1",
-                arrayOf(key, oldDate)
-            )
-            val (addr, z, city) = cur.use { c ->
-                if (!c.moveToFirst()) return false
-                Triple(c.getString(0), c.getString(1).orEmpty(), c.getString(2).orEmpty())
-            }
-            database.delete(
-                "address_log",
-                "address_key = ? AND visit_date = ?",
-                arrayOf(key, oldDate)
-            )
-            val values = ContentValues().apply {
-                put("address_key", key)
-                put("address", addr)
-                put("zip", z)
-                put("city", city)
-                put("shipments", shipments)
-                put("total_weight", totalWeight)
-                put("visit_date", date)
-            }
-            database.insertWithOnConflict(
-                "address_log",
-                null,
-                values,
-                SQLiteDatabase.CONFLICT_REPLACE
-            )
-            database.setTransactionSuccessful()
-        } finally {
-            database.endTransaction()
-        }
-        bump()
-        return true
     }
+
+    private fun visitExists(database: SQLiteDatabase, key: String, date: String): Boolean =
+        database.rawQuery(
+            "SELECT 1 FROM address_log WHERE address_key = ? AND visit_date = ? LIMIT 1",
+            arrayOf(key, date)
+        ).use { it.moveToFirst() }
 
     fun deleteVisit(address: String, zip: String, date: String): Boolean {
         val key = visitKeyForStored(address, zip, date) ?: return false
