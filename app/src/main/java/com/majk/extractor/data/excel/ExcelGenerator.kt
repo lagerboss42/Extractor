@@ -73,18 +73,20 @@ object ExcelGenerator {
     <font><sz val="11"/><name val="Calibri"/></font>
     <font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
   </fonts>
-  <fills count="4">
+  <fills count="5">
     <fill><patternFill patternType="none"/></fill>
     <fill><patternFill patternType="gray125"/></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FF1A237E"/></patternFill></fill>
     <fill><patternFill patternType="solid"><fgColor rgb="FFBBDEFB"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFFFCDD2"/></patternFill></fill>
   </fills>
   <borders count="1"><border/></borders>
   <cellStyleXfs count="1"><xf/></cellStyleXfs>
-  <cellXfs count="3">
+  <cellXfs count="4">
     <xf xfId="0"/>
     <xf xfId="0" fontId="1" fillId="2" applyFont="1" applyFill="1"/>
     <xf xfId="0" fillId="3" applyFill="1"/>
+    <xf xfId="0" fillId="4" applyFill="1"/>
   </cellXfs>
 </styleSheet>"""
 
@@ -116,11 +118,17 @@ object ExcelGenerator {
         shipments.forEachIndexed { rowIdx, s ->
             val r = rowIdx + 2
             val values = rowValues(s)
-            val styleAttr = if (s.type == ShipmentType.PICK) """ s="2"""" else ""
+            val pickup = s.type == ShipmentType.PICK
             sb.append("""<row r="$r">""")
             values.forEachIndexed { i, v ->
                 val ref = cellRef(i, rowIdx + 1)
-                sb.append("""<c r="$ref" t="inlineStr"$styleAttr><is><t>${xml(v)}</t></is></c>""")
+                val style = when {
+                    pickup -> """ s="2""""
+                    i == 3 && s.zipMismatch -> """ s="3""""
+                    i == 4 && s.cityMismatch -> """ s="3""""
+                    else -> ""
+                }
+                sb.append("""<c r="$ref" t="inlineStr"$style><is><t>${xml(v)}</t></is></c>""")
             }
             sb.append("</row>")
         }

@@ -2,6 +2,7 @@ package com.majk.extractor.data.parser
 
 import com.majk.extractor.data.model.Shipment
 import com.majk.extractor.data.model.ShipmentType
+import com.majk.extractor.util.AddressUtils
 import com.majk.extractor.util.CarrierNames
 import com.majk.extractor.util.TextEncoding
 import java.util.regex.Pattern
@@ -169,7 +170,10 @@ object OpterHttpParser {
                 if (resolved.zip.length != 5 && resolved.street.isBlank()) continue
 
                 val (recStreet, recNumber) = recoverMissingStreet(resolved.name, resolved.street, resolved.number)
-                val address = buildAddress(recStreet, recNumber)
+                val (lghFromNum, cleanedNumber) = AddressUtils.extractLgh(recNumber)
+                val (lghFromStreet, cleanedStreet) = AddressUtils.extractLgh(recStreet)
+                val lgh = lghFromNum ?: lghFromStreet
+                val address = buildAddress(cleanedStreet.ifBlank { recStreet }, cleanedNumber.ifBlank { recNumber })
                 if (address.isBlank() && resolved.zip.length != 5) continue
 
                 // Column 29 is the recipient door code. Only a delivery uses that side.
@@ -207,8 +211,10 @@ object OpterHttpParser {
                         carrier = resolvedCarrier,
                         sender = resolved.other.ifBlank { null },
                         rawId = (packageId.ifBlank { shipmentId }).ifBlank { null },
+                        shipmentId = shipmentId.ifBlank { null },
                         earliestMinutes = null,
-                        latestMinutes = latestLocal
+                        latestMinutes = latestLocal,
+                        lgh = lgh
                     )
                 )
             } catch (_: Exception) {
@@ -258,7 +264,8 @@ object OpterHttpParser {
             val key = "$name|$street|$zip"
             if (key in seen) continue
             seen.add(key)
-            val address = buildAddress(street, number)
+            val (lgh, cleaned) = AddressUtils.extractLgh(street, number)
+            val address = cleaned.ifBlank { buildAddress(street, number) }
             if (isTerminalAddress(street, name)) continue
             // Sender HQ of a delivery is not a stop. Truncated fragments of it neither.
             if (isSenderGhost(name, street, zip)) continue
@@ -274,7 +281,8 @@ object OpterHttpParser {
                     portkod = null,
                     comment = null,
                     carrier = "",
-                    rawId = null
+                    rawId = null,
+                    lgh = lgh
                 )
             )
         }
@@ -386,6 +394,8 @@ object OpterHttpParser {
                     weightKg = group.sumOf { it.weightKg },
                     portkod = group.mapNotNull { it.portkod }.firstOrNull(),
                     comment = group.mapNotNull { it.comment }.firstOrNull(),
+                    lgh = group.mapNotNull { it.lgh }.firstOrNull(),
+                    shipmentId = group.mapNotNull { it.shipmentId }.firstOrNull(),
                     earliestMinutes = group.mapNotNull { it.earliestMinutes }.minOrNull() ?: first.earliestMinutes,
                     // Earliest of the latest-times: first deadline wins.
                     latestMinutes = group.mapNotNull { it.latestMinutes }.minOrNull() ?: first.latestMinutes

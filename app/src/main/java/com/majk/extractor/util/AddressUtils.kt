@@ -8,6 +8,33 @@ object AddressUtils {
         }.trim()
     }
 
+    /**
+     * Pull an LGH number out of free text and return the cleaned remainder.
+     * Matches "LGH 1202", ", LGH 1202", "LGH: 1102", "LGH1202".
+     * Returns (number or null, text with the LGH fragment removed).
+     */
+    private val LGH = Regex("""(?i),?\s*\bLGH\s*[:.]?\s*(\d{2,6})\b""")
+
+    fun extractLgh(vararg parts: String?): Pair<String?, String> {
+        var number: String? = null
+        val cleaned = parts.filterNotNull().joinToString(" ") { part ->
+            LGH.replace(part) { m ->
+                if (number == null) number = m.groupValues[1]
+                " "
+            }
+        }.replace(Regex("\\s{2,}"), " ").trim().trim(',', ' ')
+        return number to cleaned
+    }
+
+    /** Strip any LGH fragment from an address string. Returns the cleaned address. */
+    fun stripLgh(address: String): String {
+        return LGH.replace(address) { " " }
+            .replace(Regex("\\s{2,}"), " ")
+            .trim()
+            .trim(',', ' ')
+    }
+
+
     fun cleanCity(city: String): String {
         return TextEncoding.restoreSwedish(city)
             .replace(Regex("\\s+\\d+$"), "")

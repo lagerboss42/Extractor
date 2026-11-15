@@ -21,6 +21,7 @@ import com.majk.extractor.data.cleaner.ManifestCleaner
 import com.majk.extractor.data.db.AddressStore
 import com.majk.extractor.data.excel.ExcelGenerator
 import com.majk.extractor.data.geocode.Geocoder
+import com.majk.extractor.data.postort.PostortLookup
 import com.majk.extractor.data.prefs.AppPreferences
 import com.majk.extractor.data.storage.UserDataStore
 import com.majk.extractor.data.model.FixedStop
@@ -120,12 +121,13 @@ fun MainScreen() {
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     dest.outputStream().use { input.copyTo(it) }
                 }
-                val count = CaptureRepository.loadCaptureFile(dest)
-                stopCount = count.coerceAtLeast(0)
+                val (added, total) = CaptureRepository.loadCaptureFileAdditive(dest)
+                stopCount = total.coerceAtLeast(0)
                 status = when {
-                    count < 0 -> "Could not read capture"
-                    count == 0 -> "No shipments in capture"
-                    else -> "Loaded $count stops from capture"
+                    added < 0 -> "Could not read capture"
+                    added == 0 && total == 0 -> "No shipments in capture"
+                    added == 0 -> "No new stops (already loaded, $total total)"
+                    else -> "Added $added stops ($total total)"
                 }
             } catch (e: Exception) {
                 status = "Load failed: ${e.message}"
@@ -211,14 +213,16 @@ fun MainScreen() {
 
                 val cleaned = ManifestCleaner.cleanAndConsolidate(raw)
                 val withPk = AddressStore.applyPortkods(cleaned)
-                val opterKeys = withPk.map {
+                PostortLookup.ensureLoaded(context)
+                val withCity = PostortLookup.apply(withPk)
+                val opterKeys = withCity.map {
                     "${it.address.lowercase().replace(" ", "")}|${it.zip.filter { c -> c.isDigit() }}"
                 }.toSet()
                 val kkbRows = activeFixedShipments().filter { s ->
                     val k = "${s.address.lowercase().replace(" ", "")}|${s.zip.filter { c -> c.isDigit() }}"
                     k.isBlank() || k !in opterKeys
                 }
-                val combined = withPk + kkbRows
+                val combined = withCity + kkbRows
 
                 status = if (geocodeEnabled) "Geocoding (${combined.size} stops)…" else "Writing Excel…"
                 val withCoords = if (geocodeEnabled) {
@@ -313,7 +317,7 @@ fun MainScreen() {
             onClick = { capturePicker.launch(arrayOf("*/*")) },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Load capture file")
+            Text("Load capture file (adds)")
         }
 
         Button(

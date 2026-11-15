@@ -39,6 +39,8 @@ class LocalVpnService : VpnService() {
     private var captureJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val capturing = AtomicBoolean(false)
+    /** Prevents stopVpn from running twice (ACTION_STOP + onDestroy). */
+    private val stopped = AtomicBoolean(false)
 
     private val sessions = ConcurrentHashMap<String, TcpSession>()
     private var tunOutput: FileOutputStream? = null
@@ -111,6 +113,7 @@ class LocalVpnService : VpnService() {
         } catch (_: Exception) {}
 
         capturing.set(true)
+        stopped.set(false)
         VpnStatus.isRunning = true
         startForeground(NOTIFICATION_ID, createNotification("Capturing… 0 stops"))
 
@@ -352,6 +355,7 @@ class LocalVpnService : VpnService() {
     }
 
     private fun stopVpn() {
+        if (!stopped.compareAndSet(false, true)) return
         capturing.set(false)
         captureJob?.cancel()
         captureJob = null
