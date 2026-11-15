@@ -26,6 +26,8 @@ data class Shipment(
     val comment: String?,
     val carrier: String,
     val rawId: String? = null,
+    /** Opter shipment ID (DEL column 8). Several packages can share one. */
+    val shipmentId: String? = null,
     val lat: Double? = null,
     val lon: Double? = null,
     val sender: String? = null,
@@ -42,7 +44,13 @@ data class Shipment(
      */
     val latestMinutes: Int? = null,
     /** True when this Region stop was merged from multiple packages of the same recipient. */
-    val consolidated: Boolean = false
+    val consolidated: Boolean = false,
+    /** Apartment / LGH number extracted from binary field 5 or DEL number suffix. Number only. */
+    val lgh: String? = null,
+    /** True when the city cell should be highlighted red (mismatch with postort lookup). */
+    val cityMismatch: Boolean = false,
+    /** True when the zip cell should be highlighted red (mismatch with postort lookup). */
+    val zipMismatch: Boolean = false
 ) {
     /**
      * Time-frame column. `hh:mm-hh:mm` when both bounds exist.
@@ -64,9 +72,10 @@ data class Shipment(
 
     /**
      * Info column layout (fixed order):
-     *   colli / weight / pk / other / carrier
+     *   colli / weight / LGH xxx, pk / notes / carrier
      *
-     * Example:  "4 / 56 kg / PK 1234 / Fullmakt ytterdörr / TNT"
+     * LGH, remembered codes and free-text notes sit in one group.
+     * Example:  "1 / 3 kg / LGH 1102, PK 1234, RING 30 / Region"
      */
     fun toInfoColumn(): String {
         val parts = mutableListOf<String>()
@@ -75,19 +84,25 @@ data class Shipment(
             parts.add("$colliCount / $weightKg kg")
         }
 
+        val middle = mutableListOf<String>()
+        if (!lgh.isNullOrBlank()) {
+            middle.add("LGH $lgh")
+        }
         if (!portkod.isNullOrBlank()) {
             val codes = portkod.split(",").map { it.trim() }.filter { it.isNotEmpty() }.take(4)
             if (codes.isNotEmpty()) {
-                parts.add(
+                middle.add(
                     if (portkodRemembered) "pk ${codes.joinToString(", ")}"
                     else "PK ${codes.joinToString(", ")}"
                 )
             }
         }
-
         if (!comment.isNullOrBlank()) {
             val kept = stripJunk(comment)
-            if (kept.isNotBlank() && isAllowedNote(kept)) parts.add(kept)
+            if (kept.isNotBlank() && isAllowedNote(kept)) middle.add(kept)
+        }
+        if (middle.isNotEmpty()) {
+            parts.add(middle.joinToString(", "))
         }
 
         if (carrier.isNotBlank()) {

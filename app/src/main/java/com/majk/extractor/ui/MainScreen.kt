@@ -21,6 +21,7 @@ import com.majk.extractor.data.cleaner.ManifestCleaner
 import com.majk.extractor.data.db.AddressStore
 import com.majk.extractor.data.excel.ExcelGenerator
 import com.majk.extractor.data.geocode.Geocoder
+import com.majk.extractor.data.postort.PostortLookup
 import com.majk.extractor.data.prefs.AppPreferences
 import com.majk.extractor.data.storage.UserDataStore
 import com.majk.extractor.data.model.FixedStop
@@ -68,6 +69,7 @@ fun MainScreen() {
     }
 
     fun actuallyStartVpn() {
+        // Fail closed in the UI too — service refuses, but don't claim VPN is running.
         val opterInstalled = try {
             context.packageManager.getPackageInfo("com.opter.driver", 0)
             true
@@ -85,7 +87,7 @@ fun MainScreen() {
                 }
                 context.startForegroundService(intent)
                 vpnRunning = true
-                status = "Capture started – open Opter Driver"
+                status = "VPN started – open Opter Driver"
             } catch (e: Exception) {
                 status = "VPN start failed: ${e.message}"
             }
@@ -108,6 +110,7 @@ fun MainScreen() {
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
             try {
+                // Preserve extension so .pcap is not parsed as text.
                 val name = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
                     val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                     if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
@@ -118,12 +121,13 @@ fun MainScreen() {
                 context.contentResolver.openInputStream(uri)?.use { input ->
                     dest.outputStream().use { input.copyTo(it) }
                 }
-                val count = CaptureRepository.loadCaptureFile(dest)
-                stopCount = count.coerceAtLeast(0)
+                val (added, total) = CaptureRepository.loadCaptureFileAdditive(dest)
+                stopCount = total.coerceAtLeast(0)
                 status = when {
-                    count < 0 -> "Could not read capture"
-                    count == 0 -> "No shipments in capture"
-                    else -> "Loaded $count stops from capture"
+                    added < 0 -> "Could not read capture"
+                    added == 0 && total == 0 -> "No shipments in capture"
+                    added == 0 -> "No new stops (already loaded, $total total)"
+                    else -> "Added $added stops ($total total)"
                 }
             } catch (e: Exception) {
                 status = "Load failed: ${e.message}"
@@ -209,14 +213,16 @@ fun MainScreen() {
 
                 val cleaned = ManifestCleaner.cleanAndConsolidate(raw)
                 val withPk = AddressStore.applyPortkods(cleaned)
-                val opterKeys = withPk.map {
+                PostortLookup.ensureLoaded(context)
+                val withCity = PostortLookup.apply(withPk)
+                val opterKeys = withCity.map {
                     "${it.address.lowercase().replace(" ", "")}|${it.zip.filter { c -> c.isDigit() }}"
                 }.toSet()
                 val kkbRows = activeFixedShipments().filter { s ->
                     val k = "${s.address.lowercase().replace(" ", "")}|${s.zip.filter { c -> c.isDigit() }}"
                     k.isBlank() || k !in opterKeys
                 }
-                val combined = withPk + kkbRows
+                val combined = withCity + kkbRows
 
                 status = if (geocodeEnabled) "Geocoding (${combined.size} stops)…" else "Writing Excel…"
                 val withCoords = if (geocodeEnabled) {
@@ -311,7 +317,7 @@ fun MainScreen() {
             onClick = { capturePicker.launch(arrayOf("*/*")) },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Load capture file")
+            Text("Load capture file (adds)")
         }
 
         Button(

@@ -55,9 +55,25 @@ object CaptureRepository {
             }
         }
         if (added > 0) {
-            lastParseCount = parsedShipments.size
+            lastParseCount = shipmentCount()
             persist()
         }
+    }
+
+    /**
+     * In-app stop count: one complete shipment = one stop.
+     * Packages of the same shipment (same shipment ID) count as one.
+     * Rows with no shipment ID fall back to package ID, then to a plain row.
+     */
+    fun shipmentCount(): Int {
+        val ids = mutableSetOf<String>()
+        var bare = 0
+        for (s in parsedShipments) {
+            val id = s.shipmentId?.takeIf { it.isNotBlank() }
+                ?: s.rawId?.takeIf { it.isNotBlank() }
+            if (id != null) ids.add(id) else bare++
+        }
+        return ids.size + bare
     }
 
     fun getShipments(): List<Shipment> = parsedShipments.toList()
@@ -70,7 +86,7 @@ object CaptureRepository {
         if (text.isBlank()) return
         rawChunks.add(text)
         addAll(OpterHttpParser.parse(text))
-        lastParseCount = parsedShipments.size
+        lastParseCount = shipmentCount()
         persist()
     }
 
@@ -85,7 +101,36 @@ object CaptureRepository {
         }
         val text = logFile.readText(Charsets.ISO_8859_1)
         loadFromLogText(text)
-        return parsedShipments.size
+        return shipmentCount()
+    }
+
+    /**
+     * Load a capture file and merge into the existing stop list.
+     * Same package id is not added twice. Returns (added, total), or (-1, current) on error.
+     */
+    fun loadCaptureFileAdditive(file: java.io.File): Pair<Int, Int> {
+        if (!file.exists() || file.length() == 0L) return 0 to shipmentCount()
+        val before = shipmentCount()
+        return try {
+            val looksPcap = file.extension.lowercase() in listOf("pcap", "pcapng") || isPcapMagic(file)
+            val text = if (looksPcap) {
+                val streams = PcapReader.extractTcpStreams(file)
+                if (streams.isEmpty()) return 0 to shipmentCount()
+                streams.joinToString("\n") { it.payload.toString(Charsets.ISO_8859_1) }
+            } else {
+                file.readText(Charsets.ISO_8859_1)
+            }
+            if (text.isNotBlank()) {
+                rawChunks.add(text)
+                addAll(OpterHttpParser.parse(text))
+            }
+            val after = shipmentCount()
+            val added = (after - before).coerceAtLeast(0)
+            added to after
+        } catch (e: Exception) {
+            Log.w(TAG, "loadCaptureFileAdditive: ${e.message}")
+            -1 to shipmentCount()
+        }
     }
 
     /**
@@ -93,6 +138,7 @@ object CaptureRepository {
      * .pcap / .pcapng → extract TCP streams, decode ISO-8859-1, parse.
      * .txt / .log / other → treat as ISO-8859-1 traffic log.
      * Returns shipment count, or -1 on error.
+     * Replaces the current list. Prefer loadCaptureFileAdditive for multi-file loads.
      */
     fun loadCaptureFile(file: java.io.File): Int {
         if (!file.exists() || file.length() == 0L) return 0
@@ -105,10 +151,10 @@ object CaptureRepository {
                     it.payload.toString(Charsets.ISO_8859_1)
                 }
                 loadFromLogText(combined)
-                parsedShipments.size
+                shipmentCount()
             } else {
                 loadFromLogText(file.readText(Charsets.ISO_8859_1))
-                parsedShipments.size
+                shipmentCount()
             }
         } catch (e: Exception) {
             Log.w(TAG, "loadCaptureFile: ${e.message}")
@@ -170,8 +216,10 @@ object CaptureRepository {
                         put("weightKg", s.weightKg)
                         put("portkod", s.portkod ?: JSONObject.NULL)
                         put("comment", s.comment ?: JSONObject.NULL)
+                        put("lgh", s.lgh ?: JSONObject.NULL)
                         put("carrier", s.carrier)
                         put("rawId", s.rawId ?: JSONObject.NULL)
+                        put("shipmentId", s.shipmentId ?: JSONObject.NULL)
                         put("sender", s.sender ?: JSONObject.NULL)
                         if (s.lat != null) put("lat", s.lat) else put("lat", JSONObject.NULL)
                         if (s.lon != null) put("lon", s.lon) else put("lon", JSONObject.NULL)
@@ -208,8 +256,10 @@ object CaptureRepository {
                         weightKg = o.optInt("weightKg", 0),
                         portkod = o.optString("portkod", null)?.takeIf { it.isNotBlank() && it != "null" },
                         comment = o.optString("comment", null)?.takeIf { it.isNotBlank() && it != "null" },
+                        lgh = o.optString("lgh", null)?.takeIf { it.isNotBlank() && it != "null" },
                         carrier = o.optString("carrier", ""),
                         rawId = o.optString("rawId", null)?.takeIf { it.isNotBlank() && it != "null" },
+                        shipmentId = o.optString("shipmentId", null)?.takeIf { it.isNotBlank() && it != "null" },
                         lat = if (o.isNull("lat")) null else o.optDouble("lat"),
                         lon = if (o.isNull("lon")) null else o.optDouble("lon"),
                         sender = o.optString("sender", null)?.takeIf { it.isNotBlank() && it != "null" },
@@ -222,7 +272,7 @@ object CaptureRepository {
             }
             parsedShipments.clear()
             parsedShipments.addAll(list)
-            lastParseCount = parsedShipments.size
+            lastParseCount = shipmentCount()
             Log.i(TAG, "Restored $lastParseCount shipments from disk")
         } catch (e: Exception) {
             Log.w(TAG, "restore failed: ${e.message}")

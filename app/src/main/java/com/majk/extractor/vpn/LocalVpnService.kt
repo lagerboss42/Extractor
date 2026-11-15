@@ -39,6 +39,8 @@ class LocalVpnService : VpnService() {
     private var captureJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val capturing = AtomicBoolean(false)
+    /** Prevents stopVpn from running twice (ACTION_STOP + onDestroy). */
+    private val stopped = AtomicBoolean(false)
 
     private val sessions = ConcurrentHashMap<String, TcpSession>()
     private var tunOutput: FileOutputStream? = null
@@ -104,11 +106,14 @@ class LocalVpnService : VpnService() {
             return
         }
 
+        // Keep previously parsed stops across VPN restarts (user can Clear in UI).
+        // Always start a fresh traffic log for this session.
         try {
             FileWriter(logFile, false).use { it.write("=== Extractor Traffic Log ===\n") }
         } catch (_: Exception) {}
 
         capturing.set(true)
+        stopped.set(false)
         VpnStatus.isRunning = true
         startForeground(NOTIFICATION_ID, createNotification("Capturing… 0 stops"))
 
@@ -236,6 +241,8 @@ class LocalVpnService : VpnService() {
         if (fromClient) session.appendBounded(session.clientBuffer, text)
         else session.appendBounded(session.serverBuffer, text)
 
+        // Only log/parse Opter-relevant traffic. Package is already restricted,
+        // but TLS and other ports must not be dumped into the log.
         val looksLikeOpter = session.involvesPort81 ||
             text.contains("DEL\t") ||
             text.contains("PSS\t") ||
@@ -251,6 +258,7 @@ class LocalVpnService : VpnService() {
             else -> "← server→client :${session.remotePort}"
         }
 
+        // Log only this chunk, not the growing buffer.
         val entry = buildString {
             appendLine("--------------------------------------------------")
             appendLine("[$timestamp] $direction  (${data.size} bytes)")
@@ -261,6 +269,8 @@ class LocalVpnService : VpnService() {
             FileWriter(logFile, true).use { it.append(entry) }
         } catch (_: Exception) {}
 
+        // Debounce parse: wait for a quiet period so we parse complete responses,
+        // not every fragment. This stops the 60+ phantom stop inflation.
         scheduleParse(session)
     }
 
@@ -278,6 +288,7 @@ class LocalVpnService : VpnService() {
     private fun parseAndStore(text: String) {
         if (text.isBlank()) return
         try {
+            // Full reparse of the accumulated log so live results match a clean load.
             if (logFile.exists()) {
                 CaptureRepository.reparseFromLogFile(logFile)
             } else {
@@ -344,9 +355,11 @@ class LocalVpnService : VpnService() {
     }
 
     private fun stopVpn() {
+        if (!stopped.compareAndSet(false, true)) return
         capturing.set(false)
         captureJob?.cancel()
         captureJob = null
+        // Flush any pending parses before closing sessions.
         parseJobs.values.forEach { it.cancel() }
         parseJobs.clear()
         sessions.values.forEach { sess ->

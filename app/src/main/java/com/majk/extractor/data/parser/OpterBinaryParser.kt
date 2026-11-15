@@ -2,6 +2,7 @@ package com.majk.extractor.data.parser
 
 import com.majk.extractor.data.model.Shipment
 import com.majk.extractor.data.model.ShipmentType
+import com.majk.extractor.util.AddressUtils
 import com.majk.extractor.util.CarrierNames
 import com.majk.extractor.util.TextEncoding
 import java.util.regex.Pattern
@@ -54,7 +55,8 @@ object OpterBinaryParser {
         var weight: Int = 0,
         var carrier: String = "",
         var comment: String? = null,
-        var portkod: String? = null
+        var portkod: String? = null,
+        var lgh: String? = null
     ) {
         val isTerminal: Boolean
             get() {
@@ -177,17 +179,23 @@ object OpterBinaryParser {
             }
             if (zipClean.length == 5 && f.value.length >= 3) {
                 val code = entre.trim().takeIf { it.isNotEmpty() }
-                val note = allowedNote(lgh) ?: allowedNote(info)
+                // Prefer field 5 as LGH number. Fall back to LGH fragment in street/number.
+                val (fromField, _) = AddressUtils.extractLgh(lgh)
+                val (fromAddr, cleanedStreet) = AddressUtils.extractLgh(f.value)
+                val (fromNum, cleanedNumber) = AddressUtils.extractLgh(number)
+                val lghNumber = fromField ?: fromAddr ?: fromNum
+                val note = allowedNote(info)
                 result.add(
                     Addr(
                         offset = f.offset,
                         name = name,
-                        street = f.value,
-                        number = number.trim(),
+                        street = cleanedStreet.ifBlank { f.value },
+                        number = cleanedNumber.ifBlank { number.trim() },
                         zip = zipClean,
                         city = cityClean,
                         portkod = code,
-                        comment = note
+                        comment = note,
+                        lgh = lghNumber
                     )
                 )
             }
@@ -331,11 +339,13 @@ object OpterBinaryParser {
     }
 
     private fun toShipment(a: Addr, type: ShipmentType): Shipment {
-        val address = when {
+        val rawAddress = when {
             a.street.isBlank() -> a.number
             a.number.isBlank() -> a.street
             else -> "${a.street} ${a.number}"
         }.trim()
+        val (fromAddr, address) = AddressUtils.extractLgh(rawAddress)
+        val lgh = a.lgh ?: fromAddr
 
         val recipient = a.name
             .let { if ("/" in it) it.substringBefore("/").trim() else it.trim() }
@@ -350,7 +360,7 @@ object OpterBinaryParser {
         return Shipment(
             type = type,
             recipient = recipient,
-            address = address,
+            address = address.ifBlank { rawAddress },
             zip = a.zip,
             city = a.city,
             colliCount = a.colli,
@@ -360,7 +370,8 @@ object OpterBinaryParser {
             carrier = a.carrier,
             sender = null,
             lat = a.lat,
-            lon = a.lon
+            lon = a.lon,
+            lgh = lgh
         )
     }
 }

@@ -379,7 +379,10 @@ object AddressStore {
                 val hit = if (rec.isNotBlank()) {
                     rec == wantRec && (city.isBlank() || city == wantCity)
                 } else {
-                    wantAddr.isNotBlank() && addr == wantAddr
+                    wantAddr.isNotBlank() && addressMatches(
+                        c.getString(3).orEmpty(), c.getString(4).orEmpty(),
+                        s.address, s.zip
+                    )
                 }
                 if (hit) found.add(code)
             }
@@ -394,11 +397,35 @@ object AddressStore {
     fun addressKey(s: Shipment): String = addressKey(s.address, s.zip)
 
     fun addressKey(address: String, zip: String): String {
-        // Drop a trailing entrance letter: 13A and 13 are the same door.
-        val a = foldKey(address).replace(Regex("(\\d)[a-z]$"), "$1")
+        // Keep the trailing entrance letter so 1A and 1B stay distinct.
+        val a = foldKey(address)
         val z = zip.filter { it.isDigit() }
         if (a.length < 3) return ""
         return "$a|$z"
+    }
+
+    /**
+     * Loose address match for entry-code lookup.
+     * The trailing letter is ignored only when one side has none.
+     * 13 matches 13A. 1A does not match 1B.
+     */
+    fun addressMatches(storedAddr: String, storedZip: String, wantAddr: String, wantZip: String): Boolean {
+        val s = addressKey(storedAddr, storedZip)
+        val w = addressKey(wantAddr, wantZip)
+        if (s.isBlank() || w.isBlank()) return false
+        if (s == w) return true
+        val sParts = s.split('|', limit = 2)
+        val wParts = w.split('|', limit = 2)
+        if (sParts.size < 2 || wParts.size < 2) return false
+        if (sParts[1] != wParts[1]) return false
+        val sAddr = sParts[0]
+        val wAddr = wParts[0]
+        val sLetter = sAddr.lastOrNull()?.isLetter() == true && sAddr.dropLast(1).lastOrNull()?.isDigit() == true
+        val wLetter = wAddr.lastOrNull()?.isLetter() == true && wAddr.dropLast(1).lastOrNull()?.isDigit() == true
+        if (sLetter == wLetter) return false
+        val sBase = if (sLetter) sAddr.dropLast(1) else sAddr
+        val wBase = if (wLetter) wAddr.dropLast(1) else wAddr
+        return sBase == wBase
     }
 
     fun recipientKey(name: String): String = foldKey(name)
