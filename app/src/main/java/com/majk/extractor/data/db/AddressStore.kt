@@ -61,7 +61,6 @@ object AddressStore {
         val database = codesDb()
         val now = System.currentTimeMillis()
         return shipments.map { s ->
-            if (isKkb(s)) return@map s
             val recKey = recipientKey(s.recipient)
             val addrKey = addressKey(s)
             if (recKey.isBlank() && addrKey.isBlank()) return@map s

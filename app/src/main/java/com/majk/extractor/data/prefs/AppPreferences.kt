@@ -128,6 +128,18 @@ object AppPreferences {
         }
     }
 
+    /**
+     * Words that must not have OE/AE/AO rewritten to Ö/Ä/Å.
+     * Newline-separated. Match is a substring and case-insensitive,
+     * so "Cloetta" also protects "Cloettavägen".
+     */
+    var oeExclusions: String
+        get() = current().optString("oe_exclusions", "")
+        set(v) = update { put("oe_exclusions", v) }
+
+    fun oeExclusionWords(): List<String> =
+        oeExclusions.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+
     var lantmaterietUser: String
         get() = p().getString(KEY_LM_USER, "") ?: ""
         set(v) = p().edit().putString(KEY_LM_USER, v).apply()

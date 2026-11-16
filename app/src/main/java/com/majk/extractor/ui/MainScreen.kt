@@ -218,10 +218,11 @@ fun MainScreen() {
                 val opterKeys = withCity.map {
                     "${it.address.lowercase().replace(" ", "")}|${it.zip.filter { c -> c.isDigit() }}"
                 }.toSet()
-                val kkbRows = activeFixedShipments().filter { s ->
+                val kkbRaw = activeFixedShipments().filter { s ->
                     val k = "${s.address.lowercase().replace(" ", "")}|${s.zip.filter { c -> c.isDigit() }}"
                     k.isBlank() || k !in opterKeys
                 }
+                val kkbRows = AddressStore.applyPortkods(kkbRaw)
                 val combined = withCity + kkbRows
 
                 status = if (geocodeEnabled) "Geocoding (${combined.size} stops)…" else "Writing Excel…"
@@ -258,7 +259,7 @@ fun MainScreen() {
                 }
                 val geoCount = withCoords.count { it.lat != null }
                 val kkb = kkbRows.size
-                val remembered = withPk.count { it.portkodRemembered }
+                val remembered = (withPk + kkbRows).count { it.portkodRemembered }
                 val skipNote = when {
                     !geocodeEnabled -> ""
                     filter is AppPreferences.ZipFilter.None -> ", geocoding skipped (zip list invalid)"

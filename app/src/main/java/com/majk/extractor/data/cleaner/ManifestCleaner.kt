@@ -4,6 +4,7 @@ import com.majk.extractor.data.model.Shipment
 import com.majk.extractor.data.model.ShipmentType
 import com.majk.extractor.util.AddressUtils
 import com.majk.extractor.util.CarrierNames
+import com.majk.extractor.util.TextEncoding
 import com.majk.extractor.util.WeightUtils
 
 object ManifestCleaner {
@@ -96,7 +97,7 @@ object ManifestCleaner {
         // Prefer coordinates over street address when present (including writing into Address field).
         val address = if (found != null) found.format() else spaced
         return s.copy(
-            recipient = companyOnly(s.recipient),
+            recipient = companyOnly(TextEncoding.restoreSwedish(s.recipient)),
             sender = s.sender?.let { companyOnly(it) },
             address = address,
             city = AddressUtils.cleanCity(s.city),

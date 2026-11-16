@@ -7,6 +7,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import com.majk.extractor.data.model.FixedStops
 import com.majk.extractor.data.prefs.AppPreferences
@@ -17,6 +18,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var quiet by remember { mutableIntStateOf(AppPreferences.quietMinutes) }
     var geocode by remember { mutableStateOf(AppPreferences.geocodeEnabled) }
     var geocodeZips by remember { mutableStateOf(AppPreferences.geocodeZips) }
+    var oeExclusions by remember { mutableStateOf(AppPreferences.oeExclusions) }
     var lmUser by remember { mutableStateOf(AppPreferences.lantmaterietUser) }
     var lmPass by remember { mutableStateOf(AppPreferences.lantmaterietPass) }
     var prune by remember { mutableIntStateOf(AppPreferences.pruneDays) }
@@ -124,6 +126,26 @@ fun SettingsScreen(onBack: () -> Unit) {
                 label = { Text("Lantmäteriet password") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
+            )
+
+            HorizontalDivider()
+
+            Text("Word Exclusion", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Text(
+                "Words to exclude from ÅÄÖ parsing. Separate by new line",
+                style = MaterialTheme.typography.bodySmall,
+                fontStyle = FontStyle.Italic
+            )
+            OutlinedTextField(
+                value = oeExclusions,
+                onValueChange = {
+                    oeExclusions = it
+                    AppPreferences.oeExclusions = it
+                },
+                label = { Text("Excluded words") },
+                placeholder = { Text("Cloetta") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2
             )
 
             HorizontalDivider()

@@ -1,5 +1,7 @@
 package com.majk.extractor.util
 
+import com.majk.extractor.data.prefs.AppPreferences
+
 /**
  * Repair Swedish UTF-8 mojibake (single and double) so display text has real ÅÄÖåäö.
  * Wire traffic is often UTF-8 interpreted as Latin-1 once or twice.
@@ -57,9 +59,37 @@ object TextEncoding {
     fun restoreSwedish(text: String): String {
         if (text.isEmpty()) return text
         var s = fixSwedish(text)
+        // Protect excluded words (Cloetta) so OE/AE/AO are not rewritten inside them.
+        val masks = mutableListOf<String>()
+        val excluded = try { AppPreferences.oeExclusionWords() } catch (_: Exception) { emptyList() }
+        for (word in excluded) {
+            if (word.isBlank()) continue
+            // Substring match: "Cloetta" also protects "Cloettavägen".
+            val pattern = java.util.regex.Pattern.compile(
+                Regex.escape(word),
+                java.util.regex.Pattern.CASE_INSENSITIVE or java.util.regex.Pattern.UNICODE_CASE
+            )
+            val matcher = pattern.matcher(s)
+            val sb = StringBuilder()
+            var last = 0
+            while (matcher.find()) {
+                sb.append(s, last, matcher.start())
+                val token = "\u0001EX${masks.size}\u0001"
+                masks.add(matcher.group())
+                sb.append(token)
+                last = matcher.end()
+            }
+            if (last > 0) {
+                sb.append(s, last, s.length)
+                s = sb.toString()
+            }
+        }
         s = s.replace("oe", "ö").replace("Oe", "Ö").replace("OE", "Ö")
             .replace("ae", "ä").replace("Ae", "Ä").replace("AE", "Ä")
             .replace("ao", "å").replace("Ao", "Å").replace("AO", "Å")
+        masks.forEachIndexed { i, original ->
+            s = s.replace("\u0001EX$i\u0001", original)
+        }
         return s.split(Regex("(?<=\\s)|(?=\\s)")).joinToString("") { token ->
             if (token.isBlank()) token else matchCity(token) ?: token
         }
