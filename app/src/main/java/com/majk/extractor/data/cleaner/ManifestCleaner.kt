@@ -137,6 +137,10 @@ object ManifestCleaner {
     }
 
     private fun consolidate(list: List<Shipment>): List<Shipment> {
+        // Packages of the same shipment become one row. Weight is the sum of
+        // the package weights that are present. A 0 kg package adds nothing
+        // and is never given an invented weight.
+        val folded = foldShipments(list)
         val portK = mutableListOf<Shipment>()
         val portF = mutableListOf<Shipment>()
         val portD = mutableListOf<Shipment>()
@@ -144,7 +148,7 @@ object ManifestCleaner {
         val fixedBuckets = FIXED_SITES.map { mutableListOf<Shipment>() }
         val rest = mutableListOf<Shipment>()
 
-        for (s in list) {
+        for (s in folded) {
             val site = FIXED_SITES.indexOfFirst { it.match(s) }
             when {
                 isPortF(s) -> portF.add(s)
@@ -316,6 +320,38 @@ object ManifestCleaner {
             earliestMinutes = group.mapNotNull { it.earliestMinutes }.minOrNull(),
             // Earliest of the latest-times: a stop is due at the first deadline.
             latestMinutes = group.mapNotNull { it.latestMinutes }.minOrNull()
+        )
+    }
+
+    /**
+     * Merge packages that share a shipment id.
+     * Weight is the sum of the weights that exist. Missing weight stays 0.
+     * Colli is the number of packages, so a master line that already reports
+     * the shipment colli count is not added on top of the others.
+     */
+    private fun foldShipments(list: List<Shipment>): List<Shipment> {
+        val withId = list.filter { !it.shipmentId.isNullOrBlank() }
+        val withoutId = list.filter { it.shipmentId.isNullOrBlank() }
+        val merged = withId.groupBy { "${it.type.name}|${it.shipmentId}" }.map { (_, group) ->
+            if (group.size == 1) group.first()
+            else mergeShipment(group)
+        }
+        return merged + withoutId
+    }
+
+    private fun mergeShipment(group: List<Shipment>): Shipment {
+        // Prefer the package that carries the weight, so a 0 kg line
+        // does not decide the address or recipient.
+        val base = group.maxByOrNull { it.weightKg } ?: group.first()
+        return base.copy(
+            colliCount = group.size,
+            weightKg = group.sumOf { it.weightKg },
+            portkod = group.mapNotNull { it.portkod }.firstOrNull() ?: base.portkod,
+            comment = group.mapNotNull { it.comment }.filter { it.isNotBlank() }.distinct()
+                .joinToString(" | ").ifBlank { base.comment },
+            lgh = group.mapNotNull { it.lgh }.firstOrNull() ?: base.lgh,
+            earliestMinutes = group.mapNotNull { it.earliestMinutes }.minOrNull() ?: base.earliestMinutes,
+            latestMinutes = group.mapNotNull { it.latestMinutes }.minOrNull() ?: base.latestMinutes
         )
     }
 
