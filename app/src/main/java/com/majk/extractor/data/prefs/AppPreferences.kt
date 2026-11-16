@@ -88,6 +88,46 @@ object AppPreferences {
         get() = current().optBoolean("geocode_enabled", false)
         set(v) = update { put("geocode_enabled", v) }
 
+    /**
+     * Zip allowlist for geocoding.
+     * Empty string → geocode all.
+     * Any token that is not exactly five digits → malformed → geocode nothing.
+     * Otherwise only those zips are geocoded.
+     */
+    var geocodeZips: String
+        get() = current().optString("geocode_zips", "")
+        set(v) = update { put("geocode_zips", v) }
+
+    /** Result of parsing the allowlist. */
+    sealed class ZipFilter {
+        /** List empty → geocode everything. */
+        object All : ZipFilter()
+        /** List has a non-five-digit token → geocode nothing. */
+        object None : ZipFilter()
+        /** Well-formed non-empty list. */
+        data class Only(val zips: Set<String>) : ZipFilter()
+    }
+
+    fun geocodeZipFilter(): ZipFilter {
+        val raw = geocodeZips.trim()
+        if (raw.isBlank()) return ZipFilter.All
+        // Collapse "585 71" into "58571" before splitting, so Swedish spacing is valid.
+        val normalized = raw.replace(Regex("(\\d)\\s+(?=\\d)"), "$1")
+        val tokens = normalized.split(Regex("[,;\\s]+")).map { it.trim() }.filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return ZipFilter.All
+        val bad = tokens.any { it.length != 5 || !it.all { c -> c.isDigit() } }
+        if (bad) return ZipFilter.None
+        return ZipFilter.Only(tokens.toSet())
+    }
+
+    /** Cleaned display form: sorted unique five-digit zips, or the raw text if malformed. */
+    fun geocodeZipsCleaned(): String {
+        return when (val f = geocodeZipFilter()) {
+            is ZipFilter.Only -> f.zips.sorted().joinToString(", ")
+            else -> geocodeZips
+        }
+    }
+
     var lantmaterietUser: String
         get() = p().getString(KEY_LM_USER, "") ?: ""
         set(v) = p().edit().putString(KEY_LM_USER, v).apply()

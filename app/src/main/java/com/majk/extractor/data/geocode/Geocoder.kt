@@ -33,10 +33,16 @@ object Geocoder {
 
     private val cache = ConcurrentHashMap<String, Pair<Double, Double>>()
 
-    suspend fun geocodeAll(shipments: List<Shipment>): List<Shipment> = withContext(Dispatchers.IO) {
+    suspend fun geocodeAll(
+        shipments: List<Shipment>,
+        allowedZips: Set<String>? = null
+    ): List<Shipment> = withContext(Dispatchers.IO) {
         shipments.map { s ->
-            // Do not call Nominatim when capture/cleaner already provided coordinates.
             if (s.lat != null && s.lon != null) return@map s
+            if (allowedZips != null) {
+                val zip = s.zip.filter { it.isDigit() }
+                if (zip !in allowedZips) return@map s
+            }
             val coords = lookup(s.address, s.zip, s.city)
             if (coords != null) s.copy(lat = coords.first, lon = coords.second) else s
         }

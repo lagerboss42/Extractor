@@ -225,15 +225,24 @@ fun MainScreen() {
                 val combined = withCity + kkbRows
 
                 status = if (geocodeEnabled) "Geocoding (${combined.size} stops)…" else "Writing Excel…"
-                val withCoords = if (geocodeEnabled) {
+                val filter = AppPreferences.geocodeZipFilter()
+                val withCoords = if (geocodeEnabled && filter !is AppPreferences.ZipFilter.None) {
                     try {
-                        Geocoder.geocodeAll(combined)
+                        val allowed = (filter as? AppPreferences.ZipFilter.Only)?.zips
+                        Geocoder.geocodeAll(combined, allowed)
                     } catch (e: Exception) {
                         status = "Geocode skipped: ${e.message}"
                         combined
                     }
                 } else {
                     combined
+                }
+                val skipped = when (filter) {
+                    is AppPreferences.ZipFilter.None -> combined.size
+                    is AppPreferences.ZipFilter.Only -> combined.count { s ->
+                        s.lat == null && s.zip.filter { it.isDigit() } !in filter.zips
+                    }
+                    else -> 0
                 }
 
                 status = "Writing Excel…"
@@ -250,7 +259,13 @@ fun MainScreen() {
                 val geoCount = withCoords.count { it.lat != null }
                 val kkb = kkbRows.size
                 val remembered = withPk.count { it.portkodRemembered }
-                status = "$label: ${withCoords.size} rows (${withPk.size} from Opter, $kkb kkböj, $remembered saved PK), $geoCount geocoded"
+                val skipNote = when {
+                    !geocodeEnabled -> ""
+                    filter is AppPreferences.ZipFilter.None -> ", geocoding skipped (zip list invalid)"
+                    skipped > 0 -> ", $skipped skipped (zip filter)"
+                    else -> ""
+                }
+                status = "$label: ${withCoords.size} rows (${withPk.size} from Opter, $kkb kkböj, $remembered saved PK), $geoCount geocoded$skipNote"
             } catch (e: Exception) {
                 status = "Error: ${e.javaClass.simpleName}: ${e.message}"
             } finally {

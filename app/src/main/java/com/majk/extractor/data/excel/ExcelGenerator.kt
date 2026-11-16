@@ -3,6 +3,7 @@ package com.majk.extractor.data.excel
 import android.content.Context
 import com.majk.extractor.data.model.Shipment
 import com.majk.extractor.data.model.ShipmentType
+import com.majk.extractor.util.PlusCode
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipEntry
@@ -96,6 +97,7 @@ object ExcelGenerator {
             "Time frame",
             "",
             "",
+            "",
             "zip",
             "city",
             "Info",
@@ -124,8 +126,8 @@ object ExcelGenerator {
                 val ref = cellRef(i, rowIdx + 1)
                 val style = when {
                     pickup -> """ s="2""""
-                    i == 3 && s.zipMismatch -> """ s="3""""
-                    i == 4 && s.cityMismatch -> """ s="3""""
+                    i == 4 && s.zipMismatch -> """ s="3""""
+                    i == 5 && s.cityMismatch -> """ s="3""""
                     else -> ""
                 }
                 sb.append("""<c r="$ref" t="inlineStr"$style><is><t>${xml(v)}</t></is></c>""")
@@ -165,15 +167,21 @@ object ExcelGenerator {
         return sb.toString()
     }
 
-    private fun rowValues(s: Shipment): List<String> = listOf(
-        s.toTimeFrameColumn(),
-        s.excelRecipient(),
-        s.address,
-        s.zip,
-        s.city,
-        s.toInfoColumn(),
-        s.excelCoordsColumn()
-    )
+    private fun rowValues(s: Shipment): List<String> {
+        val plus = if (s.lat != null && s.lon != null) PlusCode.short(s.lat, s.lon, s.city) else ""
+        val addressOut = if (plus.isNotBlank()) plus else s.address
+        val original = if (plus.isNotBlank()) s.address else ""
+        return listOf(
+            s.toTimeFrameColumn(),
+            s.excelRecipient(),
+            addressOut,
+            original,
+            s.zip,
+            s.city,
+            s.toInfoColumn(),
+            s.excelCoordsColumn()
+        )
+    }
 
     private fun cellRef(col: Int, rowZeroBased: Int): String {
         var c = col

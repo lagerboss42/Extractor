@@ -16,6 +16,7 @@ import com.majk.extractor.data.prefs.AppPreferences
 fun SettingsScreen(onBack: () -> Unit) {
     var quiet by remember { mutableIntStateOf(AppPreferences.quietMinutes) }
     var geocode by remember { mutableStateOf(AppPreferences.geocodeEnabled) }
+    var geocodeZips by remember { mutableStateOf(AppPreferences.geocodeZips) }
     var lmUser by remember { mutableStateOf(AppPreferences.lantmaterietUser) }
     var lmPass by remember { mutableStateOf(AppPreferences.lantmaterietPass) }
     var prune by remember { mutableIntStateOf(AppPreferences.pruneDays) }
@@ -82,6 +83,28 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 )
             }
+            OutlinedTextField(
+                value = geocodeZips,
+                onValueChange = {
+                    geocodeZips = it
+                    AppPreferences.geocodeZips = it
+                },
+                label = { Text("Zip allowlist") },
+                placeholder = { Text("58571, 58278") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2
+            )
+            Text(
+                when (val f = AppPreferences.geocodeZipFilter()) {
+                    is AppPreferences.ZipFilter.All ->
+                        "Empty: geocode every stop."
+                    is AppPreferences.ZipFilter.None ->
+                        "Invalid entries: geocoding is off until the list is five-digit zips only."
+                    is AppPreferences.ZipFilter.Only ->
+                        "Only these zips: ${f.zips.sorted().joinToString(", ")}"
+                },
+                style = MaterialTheme.typography.bodySmall
+            )
             OutlinedTextField(
                 value = lmUser,
                 onValueChange = {
