@@ -215,15 +215,10 @@ fun MainScreen() {
                 val withPk = AddressStore.applyPortkods(cleaned)
                 PostortLookup.ensureLoaded(context)
                 val withCity = PostortLookup.apply(withPk)
-                val opterKeys = withCity.map {
-                    "${it.address.lowercase().replace(" ", "")}|${it.zip.filter { c -> c.isDigit() }}"
-                }.toSet()
-                val kkbRaw = activeFixedShipments().filter { s ->
-                    val k = "${s.address.lowercase().replace(" ", "")}|${s.zip.filter { c -> c.isDigit() }}"
-                    k.isBlank() || k !in opterKeys
-                }
-                val kkbRows = AddressStore.applyPortkods(kkbRaw)
-                val combined = withCity + kkbRows
+                // kkböj is 1 colli. Merge into a matching TWS/Opter stop so Info
+                // carries both carriers; append only when the address is new.
+                val kkbShipments = AddressStore.applyPortkods(activeFixedShipments())
+                val combined = ManifestCleaner.mergeFixedStops(withCity, kkbShipments)
 
                 status = if (geocodeEnabled) "Geocoding (${combined.size} stops)…" else "Writing Excel…"
                 val filter = AppPreferences.geocodeZipFilter()
@@ -258,8 +253,8 @@ fun MainScreen() {
                 } catch (_: Exception) {
                 }
                 val geoCount = withCoords.count { it.lat != null }
-                val kkb = kkbRows.size
-                val remembered = (withPk + kkbRows).count { it.portkodRemembered }
+                val kkb = kkbShipments.size
+                val remembered = combined.count { it.portkodRemembered }
                 val skipNote = when {
                     !geocodeEnabled -> ""
                     filter is AppPreferences.ZipFilter.None -> ", geocoding skipped (zip list invalid)"
@@ -374,7 +369,7 @@ fun MainScreen() {
 
         Text("Kkböj (tap to include)", style = MaterialTheme.typography.titleMedium)
         Text(
-            "${activeFixedIds.size} selected · Info = kkböj",
+            "${activeFixedIds.size} selected · 1 colli, merges into a matching stop",
             style = MaterialTheme.typography.bodySmall
         )
 

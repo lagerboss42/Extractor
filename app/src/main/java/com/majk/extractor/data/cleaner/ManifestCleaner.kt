@@ -86,7 +86,100 @@ object ManifestCleaner {
 
     fun cleanAndConsolidate(raw: List<Shipment>): List<Shipment> {
         val cleaned = raw.map { cleanSingle(it) }
-        return consolidate(cleaned)
+        return applyDefaultLatest(consolidate(cleaned))
+    }
+
+    /**
+     * TWS with no usable latest gets 16:00. A captured time is kept,
+     * except anything past 18:00 (23:59 and similar), which is dropped
+     * and replaced with the 16:00 default. kkböj defaults are set on the stop.
+     */
+    private fun applyDefaultLatest(rows: List<Shipment>): List<Shipment> {
+        val cutoff = 18 * 60
+        val twsDefault = 16 * 60
+        return rows.map { s ->
+            if (!s.carrier.contains("TWS", ignoreCase = true)) s
+            else {
+                val latest = s.latestMinutes
+                if (latest == null || latest > cutoff) s.copy(latestMinutes = twsDefault) else s
+            }
+        }
+    }
+
+    /**
+     * Fold selected kkböj stops into the consolidated manifest.
+     * A kkböj stop is 1 colli. When the same address (or the same recipient and zip)
+     * already has a delivery, the colli is added and the carrier becomes
+     * "TWS, kkböj" so Info carries both. Otherwise the stop is appended.
+     */
+    fun mergeFixedStops(rows: List<Shipment>, fixed: List<Shipment>): List<Shipment> {
+        if (fixed.isEmpty()) return rows
+        val result = rows.toMutableList()
+        val used = mutableSetOf<Int>()
+        for (f in fixed) {
+            val idx = findFixedMatch(result, used, f)
+            if (idx != null) {
+                used.add(idx)
+                result[idx] = mergeFixedInto(result[idx], f)
+            } else {
+                result.add(f)
+            }
+        }
+        return applyDefaultLatest(result)
+    }
+
+    private fun findFixedMatch(
+        rows: List<Shipment>,
+        used: Set<Int>,
+        fixed: Shipment
+    ): Int? {
+        val fKey = addressKey(fixed)
+        val byAddress = rows.indices.firstOrNull { i ->
+            i !in used &&
+                rows[i].type == fixed.type &&
+                fKey.isNotBlank() &&
+                !fKey.startsWith("|") &&
+                addressKey(rows[i]) == fKey
+        }
+        if (byAddress != null) return byAddress
+        val fZip = fixed.zip.filter { it.isDigit() }
+        if (fZip.isEmpty()) return null
+        return rows.indices.firstOrNull { i ->
+            i !in used &&
+                rows[i].type == fixed.type &&
+                rows[i].zip.filter { it.isDigit() } == fZip &&
+                recipientsMatch(rows[i].recipient, fixed.recipient)
+        }
+    }
+
+    private fun mergeFixedInto(base: Shipment, extra: Shipment): Shipment {
+        val comments = listOfNotNull(base.comment, extra.comment)
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" | ")
+            .ifBlank { null }
+        return base.copy(
+            colliCount = base.colliCount + extra.colliCount,
+            weightKg = base.weightKg + extra.weightKg,
+            portkod = base.portkod ?: extra.portkod,
+            portkodRemembered = if (base.portkod != null) base.portkodRemembered else extra.portkodRemembered,
+            comment = comments,
+            carrier = mergeCarriers(listOf(base, extra)).ifBlank { base.carrier },
+            latestMinutes = listOfNotNull(base.latestMinutes, extra.latestMinutes).minOrNull()
+        )
+    }
+
+    private fun addressKey(s: Shipment): String {
+        val addr = s.address.lowercase().replace(" ", "")
+        val zip = s.zip.filter { it.isDigit() }
+        return "$addr|$zip"
+    }
+
+    private fun recipientsMatch(a: String, b: String): Boolean {
+        val na = normalizeRecipientKey(a)
+        val nb = normalizeRecipientKey(b)
+        if (na.isBlank() || nb.isBlank()) return false
+        return na == nb || na.contains(nb) || nb.contains(na)
     }
 
     private fun cleanSingle(s: Shipment): Shipment {

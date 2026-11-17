@@ -18,11 +18,12 @@ data class FixedStop(
         address = address,
         zip = zip,
         city = city,
-        colliCount = 0,
+        colliCount = 1,
         weightKg = 0,
         portkod = null,
         comment = null,
-        carrier = "kkböj"
+        carrier = "kkböj",
+        latestMinutes = if (id == "anstalten") 15 * 60 + 30 else 16 * 60
     )
 }
 

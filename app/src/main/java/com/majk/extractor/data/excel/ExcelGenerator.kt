@@ -92,15 +92,15 @@ object ExcelGenerator {
 </styleSheet>"""
 
     private fun sheetXml(shipments: List<Shipment>): String {
-        // Trailing coords column has an empty header (lat/lon combined).
+        // Trailing coords column and the original-address column have empty headers.
         val headers = listOf(
             "Time frame",
-            "",
             "",
             "",
             "zip",
             "city",
             "Info",
+            "",
             ""
         )
         val sb = StringBuilder()
@@ -126,8 +126,8 @@ object ExcelGenerator {
                 val ref = cellRef(i, rowIdx + 1)
                 val style = when {
                     pickup -> """ s="2""""
-                    i == 4 && s.zipMismatch -> """ s="3""""
-                    i == 5 && s.cityMismatch -> """ s="3""""
+                    i == 3 && s.zipMismatch -> """ s="3""""
+                    i == 4 && s.cityMismatch -> """ s="3""""
                     else -> ""
                 }
                 sb.append("""<c r="$ref" t="inlineStr"$style><is><t>${xml(v)}</t></is></c>""")
@@ -175,11 +175,11 @@ object ExcelGenerator {
             s.toTimeFrameColumn(),
             s.excelRecipient(),
             addressOut,
-            original,
             s.zip,
             s.city,
             s.toInfoColumn(),
-            s.excelCoordsColumn()
+            s.excelCoordsColumn(),
+            original
         )
     }
 
