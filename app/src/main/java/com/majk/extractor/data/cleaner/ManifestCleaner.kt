@@ -90,18 +90,24 @@ object ManifestCleaner {
     }
 
     /**
-     * TWS with no usable latest gets 16:00. A captured time is kept,
-     * except anything past 18:00 (23:59 and similar), which is dropped
-     * and replaced with the 16:00 default. kkböj defaults are set on the stop.
+     * TWS with no usable latest gets 16:00. A captured time is kept only
+     * inside 06:00–18:00. Before 06:00 or past 18:00 (00:00, 23:59 and
+     * similar) is dropped and replaced with the 16:00 default.
+     * kkböj defaults are set on the stop.
      */
     private fun applyDefaultLatest(rows: List<Shipment>): List<Shipment> {
-        val cutoff = 18 * 60
+        val earliestOk = 6 * 60
+        val latestOk = 18 * 60
         val twsDefault = 16 * 60
         return rows.map { s ->
             if (!s.carrier.contains("TWS", ignoreCase = true)) s
             else {
                 val latest = s.latestMinutes
-                if (latest == null || latest > cutoff) s.copy(latestMinutes = twsDefault) else s
+                if (latest == null || latest < earliestOk || latest > latestOk) {
+                    s.copy(latestMinutes = twsDefault)
+                } else {
+                    s
+                }
             }
         }
     }
