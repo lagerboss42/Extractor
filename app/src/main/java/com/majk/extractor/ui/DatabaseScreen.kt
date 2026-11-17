@@ -24,6 +24,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.majk.extractor.data.db.AddressStore
+import com.majk.extractor.data.db.GeocodeEntry
+import com.majk.extractor.data.db.GeocodeStore
 import com.majk.extractor.data.db.PkEntry
 import com.majk.extractor.data.db.VisitEntry
 import kotlinx.coroutines.delay
@@ -32,6 +34,7 @@ import kotlinx.coroutines.isActive
 private sealed class DbTarget {
     data class Code(val entry: PkEntry) : DbTarget()
     data class Visit(val entry: VisitEntry) : DbTarget()
+    data class Geo(val entry: GeocodeEntry) : DbTarget()
 }
 
 @Composable
@@ -40,7 +43,8 @@ fun DatabaseScreen() {
     var tab by remember { mutableIntStateOf(0) }
     var codes by remember { mutableStateOf<List<PkEntry>>(emptyList()) }
     var visits by remember { mutableStateOf<List<VisitEntry>>(emptyList()) }
-    val revision = AddressStore.revision
+    var geocodes by remember { mutableStateOf<List<GeocodeEntry>>(emptyList()) }
+    val revision = AddressStore.revision + GeocodeStore.revision
 
     var menuTarget by remember { mutableStateOf<DbTarget?>(null) }
     var showModify by remember { mutableStateOf(false) }
@@ -48,10 +52,14 @@ fun DatabaseScreen() {
     var showAddCode by remember { mutableStateOf(false) }
     var showClearCodes by remember { mutableStateOf(false) }
     var showClearVisits by remember { mutableStateOf(false) }
+    var showClearGeocode by remember { mutableStateOf(false) }
 
     LaunchedEffect(query, tab, revision) {
-        if (tab == 0) codes = AddressStore.searchCodes(query)
-        else visits = AddressStore.searchVisits(query)
+        when (tab) {
+            0 -> codes = AddressStore.searchCodes(query)
+            1 -> visits = AddressStore.searchVisits(query)
+            else -> geocodes = GeocodeStore.search(query)
+        }
     }
 
     Column(
@@ -71,6 +79,7 @@ fun DatabaseScreen() {
         TabRow(selectedTabIndex = tab) {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Entry codes") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Visits") })
+            Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Geocode") })
         }
         if (tab == 0) {
             Row(
@@ -128,7 +137,7 @@ fun DatabaseScreen() {
                     }
                 }
             }
-        } else {
+        } else if (tab == 1) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -171,6 +180,49 @@ fun DatabaseScreen() {
                                 text = { Text("Remove", color = Color(0xFFFF6B6B)) },
                                 onClick = {
                                     menuTarget = DbTarget.Visit(row)
+                                    showRemove = true
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "${geocodes.size} cached · address, plus code, source",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = { showClearGeocode = true },
+                    enabled = geocodes.isNotEmpty()
+                ) {
+                    Text("Clear all", color = Color(0xFFFF6B6B))
+                }
+            }
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(geocodes, key = { "${it.address}|${it.zip}|${it.city}" }) { row ->
+                    Box {
+                        GeocodeCard(
+                            row = row,
+                            onLongPress = { menuTarget = DbTarget.Geo(row) }
+                        )
+                        DropdownMenu(
+                            expanded = !showRemove && menuTarget is DbTarget.Geo &&
+                                (menuTarget as DbTarget.Geo).entry == row,
+                            onDismissRequest = {
+                                if (!showRemove) menuTarget = null
+                            }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Remove", color = Color(0xFFFF6B6B)) },
+                                onClick = {
+                                    menuTarget = DbTarget.Geo(row)
                                     showRemove = true
                                 }
                             )
@@ -241,6 +293,17 @@ fun DatabaseScreen() {
             }
         )
     }
+    if (showClearGeocode) {
+        RemoveConfirmDialog(
+            title = "Clear geocode cache?",
+            summary = "This deletes every cached lookup, hits and misses.",
+            onDismiss = { showClearGeocode = false },
+            onConfirmed = {
+                showClearGeocode = false
+                GeocodeStore.clear()
+            }
+        )
+    }
 
     if (showModify) {
         when (val t = menuTarget) {
@@ -284,6 +347,7 @@ fun DatabaseScreen() {
                     ok
                 }
             )
+            is DbTarget.Geo -> {}
             null -> {}
         }
     }
@@ -312,6 +376,19 @@ fun DatabaseScreen() {
                 },
                 onConfirmed = {
                     AddressStore.deleteVisit(t.entry.address, t.entry.zip, t.entry.date)
+                    showRemove = false
+                    menuTarget = null
+                }
+            )
+            is DbTarget.Geo -> RemoveConfirmDialog(
+                title = "Remove cached lookup?",
+                summary = "${t.entry.address}\n${t.entry.plusCode.ifBlank { "no match" }}",
+                onDismiss = {
+                    showRemove = false
+                    menuTarget = null
+                },
+                onConfirmed = {
+                    GeocodeStore.delete(t.entry.address, t.entry.zip, t.entry.city)
                     showRemove = false
                     menuTarget = null
                 }
@@ -346,6 +423,38 @@ private fun PkCard(row: PkEntry, onLongPress: () -> Unit) {
                 style = MaterialTheme.typography.bodyLarge,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun GeocodeCard(row: GeocodeEntry, onLongPress: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = {},
+                onLongClick = onLongPress
+            )
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(row.address.ifBlank { "(no address)" }, style = MaterialTheme.typography.titleSmall)
+            Text(
+                listOf(row.zip, row.city).filter { it.isNotBlank() }.joinToString(" "),
+                style = MaterialTheme.typography.bodySmall
+            )
+            Text(
+                if (row.found) row.plusCode.ifBlank { "matched" } else "no match",
+                style = MaterialTheme.typography.bodyLarge,
+                fontFamily = FontFamily.Monospace,
+                color = if (row.found) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.error
+            )
+            Text(
+                "${row.source} · ${java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(row.lookedUp))}",
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }

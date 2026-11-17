@@ -17,6 +17,7 @@ import com.majk.extractor.data.prefs.AppPreferences
 fun SettingsScreen(onBack: () -> Unit) {
     var quiet by remember { mutableIntStateOf(AppPreferences.quietMinutes) }
     var geocode by remember { mutableStateOf(AppPreferences.geocodeEnabled) }
+    var provider by remember { mutableStateOf(AppPreferences.geocodeProvider) }
     var geocodeZips by remember { mutableStateOf(AppPreferences.geocodeZips) }
     var oeExclusions by remember { mutableStateOf(AppPreferences.oeExclusions) }
     var lmUser by remember { mutableStateOf(AppPreferences.lantmaterietUser) }
@@ -85,6 +86,39 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 )
             }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Provider")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = {
+                        provider = "nominatim"
+                        AppPreferences.geocodeProvider = "nominatim"
+                    }) {
+                        Text(
+                            "Nominatim",
+                            color = if (provider == "nominatim") MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    TextButton(onClick = {
+                        provider = "lantmateriet"
+                        AppPreferences.geocodeProvider = "lantmateriet"
+                    }) {
+                        Text(
+                            "Lantmäteriet",
+                            color = if (provider == "lantmateriet") MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+            Text(
+                "One provider at a time. The other is not called.",
+                style = MaterialTheme.typography.bodySmall
+            )
             OutlinedTextField(
                 value = geocodeZips,
                 onValueChange = {

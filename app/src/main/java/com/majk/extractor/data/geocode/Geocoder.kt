@@ -1,7 +1,11 @@
 package com.majk.extractor.data.geocode
 
 import android.util.Log
+import com.majk.extractor.BuildConfig
+import com.majk.extractor.data.db.GeocodeStore
 import com.majk.extractor.data.model.Shipment
+import com.majk.extractor.data.prefs.AppPreferences
+import com.majk.extractor.util.PlusCode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -9,21 +13,18 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Geocodes Swedish addresses.
  *
- * Primary:  Nominatim (OpenStreetMap) – free, no key
- * Rate limit: ~1 request/second (Thread.sleep in nominatim())
- * In-memory cache avoids repeat lookups in the same session
- * Optional: Lantmäteriet Belägenhetsadress – set API credentials for higher accuracy
+ * One provider at a time, chosen in Settings: Nominatim or Lantmäteriet.
+ * Order: capture coordinates, then the geocode database, then the chosen provider.
+ * Hits and misses are stored. A miss is reused for 30 days.
  */
 object Geocoder {
 
     private const val TAG = "Geocoder"
     private const val NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
-    private const val USER_AGENT = "Extractor/0.3.13a (private logistics tool)"
 
     @Volatile
     var lantmaterietUser: String? = null
@@ -31,45 +32,51 @@ object Geocoder {
     @Volatile
     var lantmaterietPass: String? = null
 
-    private val cache = ConcurrentHashMap<String, Pair<Double, Double>>()
+    private fun userAgent(): String =
+        "Extractor/${BuildConfig.VERSION_NAME} (single-user, non-profit)"
 
     suspend fun geocodeAll(
         shipments: List<Shipment>,
         allowedZips: Set<String>? = null
     ): List<Shipment> = withContext(Dispatchers.IO) {
+        val useLm = AppPreferences.useLantmateriet()
         shipments.map { s ->
             if (s.lat != null && s.lon != null) return@map s
             if (allowedZips != null) {
                 val zip = s.zip.filter { it.isDigit() }
                 if (zip !in allowedZips) return@map s
             }
-            val coords = lookup(s.address, s.zip, s.city)
+            val coords = lookup(s.address, s.zip, s.city, useLm)
             if (coords != null) s.copy(lat = coords.first, lon = coords.second) else s
         }
     }
 
-    private fun lookup(address: String, zip: String, city: String): Pair<Double, Double>? {
-        val key = "${address.trim().lowercase()}|${zip.trim()}|${city.trim().lowercase()}"
-        cache[key]?.let { return it }
-
-        val fromNominatim = nominatim(address, zip, city)
-        if (fromNominatim != null) {
-            cache[key] = fromNominatim
-            return fromNominatim
+    private fun lookup(address: String, zip: String, city: String, useLm: Boolean): Pair<Double, Double>? {
+        when (val cached = GeocodeStore.lookup(address, zip, city)) {
+            is GeocodeStore.Lookup.Hit -> return cached.lat to cached.lon
+            is GeocodeStore.Lookup.FreshMiss -> return null
+            is GeocodeStore.Lookup.None -> Unit
         }
 
-        if (!lantmaterietUser.isNullOrBlank() && !lantmaterietPass.isNullOrBlank()) {
-            val fromLm = lantmateriet(address, zip, city)
-            if (fromLm != null) {
-                cache[key] = fromLm
-                return fromLm
-            }
+        val coords = if (useLm) lantmateriet(address, zip, city) else nominatim(address, zip, city)
+        val source = if (useLm) "lantmateriet" else "nominatim"
+        if (coords != null) {
+            val plus = PlusCode.short(coords.first, coords.second, city)
+            GeocodeStore.save(address, zip, city, coords.first, coords.second, plus, source, true)
+            return coords
         }
-
+        // Only a definitive empty result is a miss. A network failure is not cached.
+        if (lastWasEmpty) {
+            GeocodeStore.save(address, zip, city, null, null, "", source, false)
+        }
         return null
     }
 
+    @Volatile
+    private var lastWasEmpty = false
+
     private fun nominatim(address: String, zip: String, city: String): Pair<Double, Double>? {
+        lastWasEmpty = false
         return try {
             Thread.sleep(1100)
 
@@ -82,7 +89,7 @@ object Geocoder {
 
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                setRequestProperty("User-Agent", USER_AGENT)
+                setRequestProperty("User-Agent", userAgent())
                 connectTimeout = 10_000
                 readTimeout = 10_000
             }
@@ -98,7 +105,10 @@ object Geocoder {
             conn.disconnect()
 
             val arr = JSONArray(body)
-            if (arr.length() == 0) return null
+            if (arr.length() == 0) {
+                lastWasEmpty = true
+                return null
+            }
 
             val obj = arr.getJSONObject(0)
             val lat = obj.getString("lat").toDoubleOrNull() ?: return null
@@ -112,6 +122,7 @@ object Geocoder {
     }
 
     private fun lantmateriet(address: String, zip: String, city: String): Pair<Double, Double>? {
+        lastWasEmpty = false
         val user = lantmaterietUser ?: return null
         val pass = lantmaterietPass ?: return null
 
@@ -142,7 +153,9 @@ object Geocoder {
 
             val body = conn.inputStream.bufferedReader().readText()
             conn.disconnect()
-            extractCoordsFromJson(body)
+            val coords = extractCoordsFromJson(body)
+            if (coords == null) lastWasEmpty = true
+            coords
         } catch (e: Exception) {
             Log.w(TAG, "Lantmäteriet failed for $address: ${e.message}")
             null

@@ -88,6 +88,13 @@ object AppPreferences {
         get() = current().optBoolean("geocode_enabled", false)
         set(v) = update { put("geocode_enabled", v) }
 
+    /** "nominatim" or "lantmateriet". One provider at a time. */
+    var geocodeProvider: String
+        get() = current().optString("geocode_provider", "nominatim")
+        set(v) = update { put("geocode_provider", if (v == "lantmateriet") v else "nominatim") }
+
+    fun useLantmateriet(): Boolean = geocodeProvider == "lantmateriet"
+
     /**
      * Zip allowlist for geocoding.
      * Empty string → geocode all.
