@@ -223,7 +223,9 @@ object OpterHttpParser {
         return consolidateByRawId(shipments)
     }
 
-    /** Recipient field is sometimes "NAME / note". Keep only a real instruction. */
+    /** Recipient field is sometimes "NAME / note". Keep a real instruction as a note.
+     *  A slash-part that is a company name (TOYOTA, TMH, …) is not a note and is kept
+     *  in the recipient so Port K matching can still see it. */
     private fun splitNameNote(raw: String): Pair<String, String?> {
         if ("/" !in raw) return raw to null
         val name = raw.substringBefore("/").trim()
@@ -231,7 +233,10 @@ object OpterHttpParser {
         if (rest.isEmpty() || rest.equals(name, ignoreCase = true)) return name to null
         val folded = TextEncoding.foldAscii(rest)
         val noteWords = listOf("lamna", "ring", "fullmakt", "portkod", "kod", "dorr", "paket", "utanfor", "min")
-        return if (noteWords.any { it in folded }) name to rest else name to null
+        val companyHints = listOf("toyota", "tmh", "tmhs", "material handling", "port k", "gate k", "hallevad", "bt")
+        if (noteWords.any { it in folded }) return name to rest
+        if (companyHints.any { it in folded }) return raw.trim() to null
+        return name to null
     }
 
     private data class Tuple7(

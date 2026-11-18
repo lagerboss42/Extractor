@@ -28,6 +28,7 @@ import com.majk.extractor.data.db.GeocodeEntry
 import com.majk.extractor.data.db.GeocodeStore
 import com.majk.extractor.data.db.PkEntry
 import com.majk.extractor.data.db.VisitEntry
+import com.majk.extractor.util.PlusCode
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
@@ -213,12 +214,19 @@ fun DatabaseScreen() {
                             onLongPress = { menuTarget = DbTarget.Geo(row) }
                         )
                         DropdownMenu(
-                            expanded = !showRemove && menuTarget is DbTarget.Geo &&
+                            expanded = !showModify && !showRemove && menuTarget is DbTarget.Geo &&
                                 (menuTarget as DbTarget.Geo).entry == row,
                             onDismissRequest = {
-                                if (!showRemove) menuTarget = null
+                                if (!showModify && !showRemove) menuTarget = null
                             }
                         ) {
+                            DropdownMenuItem(
+                                text = { Text("Modify") },
+                                onClick = {
+                                    menuTarget = DbTarget.Geo(row)
+                                    showModify = true
+                                }
+                            )
                             DropdownMenuItem(
                                 text = { Text("Remove", color = Color(0xFFFF6B6B)) },
                                 onClick = {
@@ -239,7 +247,7 @@ fun DatabaseScreen() {
         var address by remember { mutableStateOf("") }
         var zip by remember { mutableStateOf("") }
         var city by remember { mutableStateOf("") }
-        val canSave = code.isNotBlank() && (recipient.isNotBlank() || (address.isNotBlank() && zip.isNotBlank()))
+        val canSave = code.isNotBlank() && address.isNotBlank() && zip.isNotBlank()
         AlertDialog(
             onDismissRequest = { showAddCode = false },
             title = { Text("Add entry code") },
@@ -347,7 +355,33 @@ fun DatabaseScreen() {
                     ok
                 }
             )
-            is DbTarget.Geo -> {}
+            is DbTarget.Geo -> ModifyGeoDialog(
+                entry = t.entry,
+                onDismiss = {
+                    showModify = false
+                    menuTarget = null
+                },
+                onSave = { address, zip, city, plusCode, lat, lon ->
+                    val old = t.entry
+                    if (address != old.address || zip != old.zip || city != old.city) {
+                        GeocodeStore.delete(old.address, old.zip, old.city)
+                    }
+                    val short = PlusCode.short(lat, lon, city)
+                    GeocodeStore.save(
+                        address = address,
+                        zip = zip,
+                        city = city,
+                        lat = lat,
+                        lon = lon,
+                        plusCode = short.ifBlank { plusCode },
+                        source = "Manual",
+                        found = true
+                    )
+                    showModify = false
+                    menuTarget = null
+                    true
+                }
+            )
             null -> {}
         }
     }
@@ -452,9 +486,11 @@ private fun GeocodeCard(row: GeocodeEntry, onLongPress: () -> Unit) {
                 color = if (row.found) MaterialTheme.colorScheme.primary
                 else MaterialTheme.colorScheme.error
             )
+            val isManual = row.source.equals("Manual", ignoreCase = true)
             Text(
-                "${row.source} · ${java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(row.lookedUp))}",
-                style = MaterialTheme.typography.bodySmall
+                "${if (isManual) "Manual" else row.source} · ${java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date(row.lookedUp))}",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (isManual) Color(0xFF4DB6AC) else Color.Unspecified
             )
         }
     }
@@ -676,6 +712,122 @@ private fun RemoveConfirmDialog(
                     style = MaterialTheme.typography.labelLarge
                 )
             }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun ModifyGeoDialog(
+    entry: GeocodeEntry,
+    onDismiss: () -> Unit,
+    onSave: (address: String, zip: String, city: String, plusCode: String, lat: Double, lon: Double) -> Boolean
+) {
+    var address by remember { mutableStateOf(entry.address) }
+    var zip by remember { mutableStateOf(entry.zip) }
+    var city by remember { mutableStateOf(entry.city) }
+    var plusCode by remember { mutableStateOf(entry.plusCode) }
+    var latText by remember { mutableStateOf(entry.lat?.toString().orEmpty()) }
+    var lonText by remember { mutableStateOf(entry.lon?.toString().orEmpty()) }
+    var lastEdited by remember { mutableStateOf("plus") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun currentLat() = latText.trim().toDoubleOrNull()
+    fun currentLon() = lonText.trim().toDoubleOrNull()
+
+    val lat = currentLat()
+    val lon = currentLon()
+    val canSave = address.trim().isNotBlank() &&
+        lat != null && lat in -90.0..90.0 &&
+        lon != null && lon in -180.0..180.0
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Modify geocode") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = zip, onValueChange = { zip = it }, label = { Text("Zip") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = city, onValueChange = { city = it }, label = { Text("City") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    value = plusCode,
+                    onValueChange = {
+                        plusCode = it
+                        lastEdited = "plus"
+                    },
+                    label = { Text("Plus Code") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = latText,
+                    onValueChange = {
+                        latText = it
+                        lastEdited = "coords"
+                        val la = it.trim().toDoubleOrNull()
+                        val lo = currentLon()
+                        if (la != null && lo != null) plusCode = PlusCode.short(la, lo, city)
+                    },
+                    label = { Text("Latitude") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = lonText,
+                    onValueChange = {
+                        lonText = it
+                        lastEdited = "coords"
+                        val la = currentLat()
+                        val lo = it.trim().toDoubleOrNull()
+                        if (la != null && lo != null) plusCode = PlusCode.short(la, lo, city)
+                    },
+                    label = { Text("Longitude") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                LaunchedEffect(plusCode) {
+                    if (lastEdited == "plus") {
+                        val decoded = PlusCode.decode(plusCode, currentLat(), currentLon(), city)
+                        if (decoded != null) {
+                            latText = decoded.first.toString()
+                            lonText = decoded.second.toString()
+                        }
+                    }
+                }
+                if (error != null) Text(error!!, color = Color(0xFFFF6B6B), style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val la = currentLat()
+                    val lo = currentLon()
+                    if (la == null || lo == null || la !in -90.0..90.0 || lo !in -180.0..180.0) {
+                        error = "Latitude must be -90..90 and longitude -180..180."
+                        return@TextButton
+                    }
+                    if (lastEdited == "plus") {
+                        val decoded = PlusCode.decode(plusCode, la, lo, city)
+                        if (decoded == null) {
+                            error = "Plus Code does not decode (bad character or missing +)."
+                            return@TextButton
+                        }
+                        val ok = onSave(address.trim(), zip.trim(), city.trim(), plusCode.trim(), decoded.first, decoded.second)
+                        if (!ok) error = "Could not save."
+                    } else {
+                        val ok = onSave(address.trim(), zip.trim(), city.trim(), plusCode.trim(), la, lo)
+                        if (!ok) error = "Could not save."
+                    }
+                },
+                enabled = canSave
+            ) { Text("Save") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }

@@ -209,7 +209,7 @@ object ManifestCleaner {
         )
     }
 
-    /** Company / site name only; strip slash-suffix and drop duplicate name halves. */
+    /** Company / site name only; strip slash-suffix notes but keep a company name after the slash. */
     private fun companyOnly(name: String): String {
         var trimmed = name.trim().replace(Regex("\\s+"), " ")
         if (trimmed.isEmpty()) return trimmed
@@ -226,12 +226,25 @@ object ManifestCleaner {
                         if (p.length > prev.length) out[out.lastIndex] = p
                         continue
                     }
+                    // Keep a slash-part that is a company name so Port K can still match.
+                    val folded = normalizeAscii(p)
+                    val company = listOf("TOYOTA", "TMH", "TMHS", "MATERIAL HANDLING", "PORT K", "GATE K", "HALLEVAD", "BT")
+                    if (company.any { it in folded }) {
+                        out.add(p)
+                        continue
+                    }
                     out.add(p)
                 }
             }
             trimmed = out.joinToString(" / ")
         }
         val beforeSlash = trimmed.substringBefore("/").trim()
+        val after = trimmed.substringAfter("/", "").trim()
+        if (after.isNotEmpty()) {
+            val folded = normalizeAscii(after)
+            val company = listOf("TOYOTA", "TMH", "TMHS", "MATERIAL HANDLING", "PORT K", "GATE K", "HALLEVAD", "BT")
+            if (company.any { it in folded }) return trimmed
+        }
         return beforeSlash.ifEmpty { trimmed }
     }
 
@@ -424,9 +437,14 @@ object ManifestCleaner {
 
     /**
      * Merge packages that share a shipment id.
-     * Weight is the sum of the weights that exist. Missing weight stays 0.
-     * Colli is the number of packages, so a master line that already reports
-     * the shipment colli count is not added on top of the others.
+     * Weight is the sum of the package weights that are present. A 0 kg package
+     * adds nothing and is never given an invented weight. If only one package
+     * carries a weight (even if it is not the first), that weight is the
+     * shipment weight. Do not spread it and do not drop it.
+     * Colli is the number of distinct packages, not the sum of a repeated
+     * shipment-colli field. A master line that already reports the shipment
+     * colli is not added on top of the package lines.
+     * The kkböj +1 rule lives only in mergeFixedStops and is not affected.
      */
     private fun foldShipments(list: List<Shipment>): List<Shipment> {
         val withId = list.filter { !it.shipmentId.isNullOrBlank() }
@@ -440,11 +458,20 @@ object ManifestCleaner {
 
     private fun mergeShipment(group: List<Shipment>): Shipment {
         // Prefer the package that carries the weight, so a 0 kg line
-        // does not decide the address or recipient.
+        // does not decide the address or recipient. Scan every package;
+        // the weighted one may not be the first.
         val base = group.maxByOrNull { it.weightKg } ?: group.first()
+        // Distinct packages only. Drop a master line whose colli already
+        // equals the number of other lines so it is not counted twice.
+        val packageLines = if (group.size > 1) {
+            val others = group.size - 1
+            group.filter { it.colliCount != others || others == 0 }
+        } else group
+        val colli = if (packageLines.isEmpty()) group.size else packageLines.size
+        val weight = group.sumOf { it.weightKg }
         return base.copy(
-            colliCount = group.size,
-            weightKg = group.sumOf { it.weightKg },
+            colliCount = colli,
+            weightKg = weight,
             portkod = group.mapNotNull { it.portkod }.firstOrNull() ?: base.portkod,
             comment = group.mapNotNull { it.comment }.filter { it.isNotBlank() }.distinct()
                 .joinToString(" | ").ifBlank { base.comment },

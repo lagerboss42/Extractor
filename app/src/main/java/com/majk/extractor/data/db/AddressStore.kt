@@ -341,16 +341,14 @@ object AddressStore {
     }
 
     private fun upsertCode(database: SQLiteDatabase, s: Shipment, code: String, now: Long) {
-        val rec = s.recipient.takeIf { it.isNotBlank() }
         val values = ContentValues().apply {
             put("address_key", addressKey(s))
             put("address", s.address)
             put("zip", s.zip)
             put("city", s.city)
-            put("recipient", rec)
-            put("recipient_key", recipientKey(s.recipient))
             put("code", code)
             put("updated_at", now)
+            // Do not write recipient or recipient_key. New rows match by address + zip.
         }
         database.insertWithOnConflict("pk_codes", null, values, SQLiteDatabase.CONFLICT_IGNORE)
     }
@@ -445,7 +443,8 @@ object AddressStore {
 
     /**
      * Manual entry-code add. Code is alphanumeric plus *#.
-     * Recipient is optional; when present it is the display name.
+     * The dialog may show a recipient field, but it is not stored.
+     * New rows match by address + zip only.
      */
     fun insertManualCode(
         code: String,
@@ -455,24 +454,22 @@ object AddressStore {
         city: String = ""
     ): Boolean {
         val c = code.trim()
-        val rec = recipient?.trim()?.takeIf { it.isNotBlank() }
         val a = address.trim()
         val z = zip.trim()
         val cityClean = city.trim()
         if (c.isEmpty()) return false
         if (!c.matches(Regex("^[A-Za-z0-9*#]+$"))) return false
-        if (rec == null && (a.isEmpty() || z.isEmpty())) return false
-        val key = if (a.isEmpty()) "" else addressKey(a, z)
-        if (rec == null && key.isBlank()) return false
+        if (a.isEmpty() || z.isEmpty()) return false
+        val key = addressKey(a, z)
+        if (key.isBlank()) return false
         val values = ContentValues().apply {
             put("address_key", key)
             put("address", a)
             put("zip", z)
             put("city", cityClean)
             put("code", c)
-            put("recipient", rec)
-            put("recipient_key", recipientKey(rec.orEmpty()))
             put("updated_at", System.currentTimeMillis())
+            // recipient and recipient_key are left blank on purpose.
         }
         val row = codesDb().insertWithOnConflict("pk_codes", null, values, SQLiteDatabase.CONFLICT_IGNORE)
         if (row >= 0) bump()
