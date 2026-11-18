@@ -344,8 +344,19 @@ object ManifestCleaner {
         return "TRUCKGATAN2" in addr && (zip.isEmpty() || zip == "59535")
     }
 
+    /** Truckgatan 1 in Mjölby is Port F even when the recipient has no "Port F". */
+    private fun isTruckgatan1(s: Shipment): Boolean {
+        val addr = normalizeAscii(s.address).replace(" ", "")
+        val marker = "TRUCKGATAN1"
+        val i = addr.indexOf(marker)
+        if (i < 0) return false
+        val after = i + marker.length
+        if (after < addr.length && addr[after].isDigit()) return false
+        return isMjolby(s)
+    }
+
     private fun isPortF(s: Shipment): Boolean {
-        if (isTruckgatan2(s)) return true
+        if (isTruckgatan2(s) || isTruckgatan1(s)) return true
         val h = haystack(s)
         return PORT_F_KEYWORDS.any { normalizeAscii(it) in h }
     }
@@ -360,7 +371,7 @@ object ManifestCleaner {
         if (isPortF(s) || isPortD(s)) return false
         val h = haystack(s)
         if (PORT_K_EXCLUDE.any { normalizeAscii(it) in h }) return false
-        if (isTruckgatan2(s)) return false
+        if (isTruckgatan2(s) || isTruckgatan1(s)) return false
         return PORT_K_KEYWORDS.any { normalizeAscii(it) in h }
     }
 

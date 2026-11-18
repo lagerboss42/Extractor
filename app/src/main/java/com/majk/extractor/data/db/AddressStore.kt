@@ -443,8 +443,8 @@ object AddressStore {
 
     /**
      * Manual entry-code add. Code is alphanumeric plus *#.
-     * The dialog may show a recipient field, but it is not stored.
-     * New rows match by address + zip only.
+     * Recipient is optional; when present it is stored.
+     * A capture or manifest save does not write recipient.
      */
     fun insertManualCode(
         code: String,
@@ -454,6 +454,7 @@ object AddressStore {
         city: String = ""
     ): Boolean {
         val c = code.trim()
+        val rec = recipient?.trim()?.takeIf { it.isNotBlank() }
         val a = address.trim()
         val z = zip.trim()
         val cityClean = city.trim()
@@ -468,8 +469,9 @@ object AddressStore {
             put("zip", z)
             put("city", cityClean)
             put("code", c)
+            put("recipient", rec)
+            put("recipient_key", recipientKey(rec.orEmpty()))
             put("updated_at", System.currentTimeMillis())
-            // recipient and recipient_key are left blank on purpose.
         }
         val row = codesDb().insertWithOnConflict("pk_codes", null, values, SQLiteDatabase.CONFLICT_IGNORE)
         if (row >= 0) bump()

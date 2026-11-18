@@ -348,7 +348,15 @@ object OpterBinaryParser {
         val lgh = a.lgh ?: fromAddr
 
         val recipient = a.name
-            .let { if ("/" in it) it.substringBefore("/").trim() else it.trim() }
+            .let { raw ->
+                if ("/" !in raw) raw.trim()
+                else {
+                    val rest = raw.substringAfter("/").trim().lowercase()
+                    val site = listOf("toyota", "tmh", "port k", "gate k", "hallevad", "material handling")
+                        .any { it in rest }
+                    if (site) raw.trim() else raw.substringBefore("/").trim()
+                }
+            }
             .let { n ->
                 when {
                     n.equals("UT", true) || n.equals("IN", true) -> ""

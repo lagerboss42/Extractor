@@ -184,6 +184,9 @@ object OpterHttpParser {
                 val colli = colliRaw.toIntOrNull()?.coerceAtLeast(0) ?: 1
                 val weight = parseWeight(weightRaw)
                 val carrier = CarrierNames.shorten(carrierRaw)
+                // A distinct package line is 1 colli. Column 45 is often the
+                // shipment total and must not be copied onto every package.
+                val packageColli = if (packageId.isNotBlank()) 1 else if (colli > 0) colli else 1
                 // Column 49 is latest delivery in UTC. Shift +1 h to local.
                 // F7 / F12 / "före XX" name a latest bound, never an earliest.
                 // Earliest is not in the DEL line. Leave it blank.
@@ -204,7 +207,7 @@ object OpterHttpParser {
                         address = address.ifBlank { resolved.name },
                         zip = resolved.zip,
                         city = resolved.city,
-                        colliCount = if (colli > 0) colli else 1,
+                        colliCount = packageColli,
                         weightKg = weight,
                         portkod = portkod,
                         comment = nameNote,

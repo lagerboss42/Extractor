@@ -112,9 +112,9 @@ object PlusCode {
     }
 
     private fun isFullCode(code: String): Boolean {
-        if (code.length < 11) return false
-        if (code[8] != SEPARATOR) return false
-        return code.length == 11 && code.all { it == SEPARATOR || ALPHABET.indexOf(it) >= 0 }
+        // encode() writes 8 chars, '+', then 3 chars: "XXXXXXXX+XXX" (12).
+        if (code.length != 12 || code[8] != SEPARATOR) return false
+        return code.all { it == SEPARATOR || ALPHABET.indexOf(it) >= 0 }
     }
 
     private fun recoverFull(
@@ -135,17 +135,19 @@ object PlusCode {
         if (refLat != null && refLon != null && !refLat.isNaN() && !refLon.isNaN()) {
             return refLat to refLon
         }
-        val key = city?.trim()?.lowercase()?.replace("ö", "o")?.replace("ä", "a")?.replace("å", "a")
+        val key = city?.trim()?.lowercase()
+            ?.replace("ö", "o")?.replace("ä", "a")?.replace("å", "a")
+            ?.replace("oe", "o")
         CITY_CENTROIDS[key]?.let { return it }
         // Service-area fallback around Linköping (lat 56.2–59.9, lon 11.1–19.3).
         return FALLBACK_LAT to FALLBACK_LON
     }
 
-    /** Decode a full 11-char code to the centre of its cell. Reverses [encode]. */
+    /** Decode a full code to the centre of its cell. Reverses [encode]. */
     private fun decodeFull(code: String): Pair<Double, Double>? {
         if (!isFullCode(code)) return null
         val digits = code.filter { it != SEPARATOR }
-        if (digits.length != 10) return null
+        if (digits.length != 11) return null
 
         var lat = 0.0
         var lon = 0.0
@@ -162,9 +164,8 @@ object PlusCode {
             lonRes /= 20.0
         }
 
-        // 11th char is the 4×5 grid refinement of the last cell.
-        val gridChar = digits[9]
-        val gridIndex = ALPHABET.indexOf(gridChar)
+        // 11th character is the 4×5 refinement grid of the last cell.
+        val gridIndex = ALPHABET.indexOf(digits[10])
         if (gridIndex < 0) return null
         val row = gridIndex / 5
         val col = gridIndex % 5

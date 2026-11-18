@@ -11,8 +11,8 @@ android {
         applicationId = "com.majk.extractor"
         minSdk = 26
         targetSdk = 35
-        versionCode = 43
-        versionName = "0.5.13b"
+        versionCode = 44
+        versionName = "0.5.14b"
     }
 
     buildFeatures {
