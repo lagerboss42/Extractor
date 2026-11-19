@@ -35,15 +35,17 @@ fun ReviewScreen(
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
+                            listOf(stop.address, stop.zip, stop.city).filter { it.isNotBlank() }.joinToString(", ")
+                                .ifBlank { "(no address)" },
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
                             buildString {
                                 append(stop.fixedSiteName ?: stop.recipient.ifBlank { "(no name)" })
                                 append(" · ")
                                 append(if (stop.type == ShipmentType.PICK) "pickup" else "delivery")
                             },
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                        Text(
-                            listOf(stop.address, stop.zip, stop.city).filter { it.isNotBlank() }.joinToString(", "),
                             style = MaterialTheme.typography.bodySmall
                         )
                         Text(
@@ -110,6 +112,7 @@ private fun applyEdit(
     return next
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditStopDialog(
     stop: Shipment,
@@ -120,8 +123,16 @@ private fun EditStopDialog(
     var address by remember { mutableStateOf(stop.address) }
     var zip by remember { mutableStateOf(stop.zip) }
     var city by remember { mutableStateOf(stop.city) }
+    var info by remember { mutableStateOf(stop.comment.orEmpty()) }
+    var colli by remember { mutableStateOf(stop.colliCount.toString()) }
+    var weight by remember { mutableStateOf(stop.weightKg.toString()) }
+    var type by remember { mutableStateOf(stop.type) }
     var site by remember { mutableStateOf(stop.fixedSiteName ?: "None") }
-    val sites = FixedSiteStore.all()
+    var siteOpen by remember { mutableStateOf(false) }
+    val sites = listOf("None") + FixedSiteStore.all().map { it.name }.distinct()
+    val colliInt = colli.toIntOrNull()
+    val weightInt = weight.toIntOrNull()
+    val canSave = colliInt != null && colliInt >= 0 && weightInt != null && weightInt >= 0
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -135,25 +146,54 @@ private fun EditStopDialog(
                 OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = zip, onValueChange = { zip = it }, label = { Text("Zip") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = city, onValueChange = { city = it }, label = { Text("City") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Text("Assign to fixed site", style = MaterialTheme.typography.bodySmall)
-                sites.map { it.name }.distinct().plus("None").forEach { name ->
-                    Row {
-                        RadioButton(selected = site == name, onClick = { site = name })
-                        Text(name, modifier = Modifier.padding(top = 12.dp))
+                OutlinedTextField(value = colli, onValueChange = { colli = it }, label = { Text("Colli") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = weight, onValueChange = { weight = it }, label = { Text("Weight kg") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = info, onValueChange = { info = it }, label = { Text("Info") }, modifier = Modifier.fillMaxWidth())
+                Text("Type", style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = type == ShipmentType.DEL, onClick = { type = ShipmentType.DEL }, label = { Text("Delivery") })
+                    FilterChip(selected = type == ShipmentType.PICK, onClick = { type = ShipmentType.PICK }, label = { Text("Pickup") })
+                }
+                ExposedDropdownMenuBox(expanded = siteOpen, onExpandedChange = { siteOpen = it }) {
+                    OutlinedTextField(
+                        value = site,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Assign to fixed site") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = siteOpen) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                    )
+                    ExposedDropdownMenu(expanded = siteOpen, onDismissRequest = { siteOpen = false }) {
+                        sites.forEach { name ->
+                            DropdownMenuItem(
+                                text = { Text(name) },
+                                onClick = {
+                                    site = name
+                                    siteOpen = false
+                                }
+                            )
+                        }
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                val updated = stop.copy(
-                    recipient = recipient.trim(),
-                    address = address.trim(),
-                    zip = zip.trim(),
-                    city = city.trim()
-                )
-                onSave(updated, site.takeIf { it != "None" })
-            }) { Text("Save") }
+            TextButton(
+                onClick = {
+                    val updated = stop.copy(
+                        type = type,
+                        recipient = recipient.trim(),
+                        address = address.trim(),
+                        zip = zip.trim(),
+                        city = city.trim(),
+                        colliCount = colliInt ?: stop.colliCount,
+                        weightKg = weightInt ?: stop.weightKg,
+                        comment = info.trim().ifBlank { null }
+                    )
+                    onSave(updated, site.takeIf { it != "None" })
+                },
+                enabled = canSave
+            ) { Text("Save") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }

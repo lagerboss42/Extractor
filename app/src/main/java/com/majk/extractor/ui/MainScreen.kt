@@ -28,6 +28,12 @@ import com.majk.extractor.data.model.FixedStop
 import com.majk.extractor.data.model.FixedStops
 import com.majk.extractor.data.model.Shipment
 import com.majk.extractor.data.model.ShipmentType
+
+/** Holds the review list across tab changes. Cleared only on Write or Cancel. */
+object ReviewHold {
+    var stops: List<Shipment>? = null
+    var label: String = "Capture Excel"
+}
 import com.majk.extractor.vpn.CaptureRepository
 import com.majk.extractor.vpn.LocalVpnService
 import com.majk.extractor.vpn.VpnStatus
@@ -47,8 +53,7 @@ fun MainScreen() {
     var geocodeEnabled by remember { mutableStateOf(AppPreferences.geocodeEnabled) }
     var visibleSections by remember { mutableStateOf(AppPreferences.visibleSections()) }
     var activeFixedIds by remember { mutableStateOf(setOf<String>()) }
-    var reviewStops by remember { mutableStateOf<List<Shipment>?>(null) }
-    var reviewLabel by remember { mutableStateOf("Capture Excel") }
+    var reviewLabel by remember { mutableStateOf(ReviewHold.label) }
 
     LaunchedEffect(Unit) {
         CaptureRepository.init(context)
@@ -222,7 +227,8 @@ fun MainScreen() {
                 val kkbShipments = AddressStore.applyPortkods(activeFixedShipments())
                 val combined = ManifestCleaner.mergeFixedStops(withCity, kkbShipments)
                 reviewLabel = label
-                reviewStops = combined
+                ReviewHold.label = label
+                ReviewHold.stops = combined
                 status = "Review ${combined.size} stops"
             } catch (e: Exception) {
                 status = "Error: ${e.javaClass.simpleName}: ${e.message}"
@@ -276,7 +282,7 @@ fun MainScreen() {
                     else -> ""
                 }
                 status = "$reviewLabel: ${withCoords.size} rows, $remembered saved PK, $geoCount geocoded$skipNote"
-                reviewStops = null
+                ReviewHold.stops = null
             } catch (e: Exception) {
                 status = "Error: ${e.javaClass.simpleName}: ${e.message}"
             } finally {
@@ -308,13 +314,13 @@ fun MainScreen() {
         }
     }
 
-    val pending = reviewStops
+    val pending = ReviewHold.stops
     if (pending != null) {
         ReviewScreen(
             stops = pending,
-            onChange = { reviewStops = it },
-            onWrite = { writeReviewed(reviewStops ?: pending) },
-            onCancel = { reviewStops = null }
+            onChange = { ReviewHold.stops = it },
+            onWrite = { writeReviewed(ReviewHold.stops ?: pending) },
+            onCancel = { ReviewHold.stops = null }
         )
         return
     }

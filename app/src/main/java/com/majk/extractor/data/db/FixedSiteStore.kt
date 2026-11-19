@@ -32,13 +32,13 @@ data class FixedSiteRule(
     fun matches(s: Shipment): Boolean {
         if (typeFilter == "pick" && s.type != ShipmentType.PICK) return false
         if (typeFilter == "del" && s.type == ShipmentType.PICK) return false
-        if (requireZip.isNotBlank() && digits(s.zip) != digits(requireZip)) return false
-        if (requireCity.isNotBlank() && !cityHit(s.city, requireCity)) return false
-        val rec = fold(s.recipient)
+        if (zip.isNotBlank() && s.zip.isNotBlank() && digits(s.zip) != digits(zip)) return false
+        if (city.isNotBlank() && s.city.isNotBlank() && !cityHit(s.city, city)) return false
+        val rec = fold(listOf(s.recipient, s.address, s.sender.orEmpty()).joinToString(" "))
         val addr = fold(s.address)
         val addrTight = addr.replace(" ", "")
         val excludes = keywords(excludeKeywords)
-        if (excludes.any { keywordHit(it, "$rec $addr") }) return false
+        if (excludes.any { keywordHit(it, rec) }) return false
         val recKeys = keywords(recipientKeywords)
         val addrKeys = keywords(addressKeywords)
         if (recKeys.isEmpty() && addrKeys.isEmpty()) return false
@@ -164,10 +164,13 @@ object FixedSiteStore {
             return
         }
         cached = try {
-            parse(f.readText())
+            val parsed = parse(f.readText())
+            val seeded = setOf("59535", "59530", "58580", "59631")
+            parsed.map { if (FixedSiteRule.digits(it.zip) in seeded) it.copy(zip = "") else it }
         } catch (_: Exception) {
             seed()
         }
+        write(cached.orEmpty())
     }
 
     private fun write(list: List<FixedSiteRule>) {
@@ -223,18 +226,18 @@ object FixedSiteStore {
     }
 
     private fun seed(): List<FixedSiteRule> = listOf(
-        site("Port F", "84C3+H7H Mjölby", "59535", "Mjölby", "port f, gate f, truckhuset", "truckgatan 2", "", true),
-        site("Port D", "8496+2RC Mjölby", "59535", "Mjölby", "port d, gate d", "", "", false),
-        site("Port K", "8493+J2P Mjölby", "59535", "Mjölby", "toyota, tmh, tmhs, \"Port K\", \"Gate K\", \"material handling\", hallevad, bt", "", "port f, gate f, truckhuset", false, requireCity = "Mjölby"),
-        site("Cloetta", "GF7X+3V Ljungsbro", "58580", "Ljungsbro", "cloetta", "", "", false, type = "pick"),
-        site("Cloetta Godsmottagning", "GG72+6F Ljungsbro", "58580", "Ljungsbro", "cloetta", "", "", false, type = "del"),
-        site("ASM Foods", "84CJ+J3R Mjölby", "59530", "Mjölby", "asm", "kyrkogatan, magasinsgatan", "", false),
-        site("Nelleman", "93QW+43H Skänninge", "59631", "Skänninge", "nelleman", "", "", false),
-        site("GE", "93QV+9M2 Skänninge", "59631", "Skänninge", "GE, \"GE ENERGY\"", "", "", false),
-        site("Universal Power", "93PW+J25 Skänninge", "59631", "Skänninge", "universal", "", "", false),
-        site("Runsven", "93JX+Q98 Skänninge", "59631", "Skänninge", "runsven", "borgmästaregatan 23, mjölbygatan 25", "", true),
-        site("Vestas", "93QR+5H8 Skänninge", "59631", "Skänninge", "vestas", "", "", false),
-        site("Aebi", "93PV+H3J Skänninge", "59631", "Skänninge", "aebi", "", "", false)
+        site("Port F", "84C3+H7H Mjölby", "", "Mjölby", "port f, gate f, truckhuset", "truckgatan 2", "", true),
+        site("Port D", "8496+2RC Mjölby", "", "Mjölby", "port d, gate d", "", "", false),
+        site("Port K", "8493+J2P Mjölby", "", "Mjölby", "toyota, tmh, tmhs, \"Port K\", \"Gate K\", \"material handling\", hallevad, bt", "", "port f, gate f, truckhuset", false),
+        site("Cloetta", "GF7X+3V Ljungsbro", "", "Ljungsbro", "cloetta", "", "", false, type = "pick"),
+        site("Cloetta Godsmottagning", "GG72+6F Ljungsbro", "", "Ljungsbro", "cloetta", "", "", false, type = "del"),
+        site("ASM Foods", "84CJ+J3R Mjölby", "", "Mjölby", "asm", "kyrkogatan, magasinsgatan", "", false),
+        site("Nelleman", "93QW+43H Skänninge", "", "Skänninge", "nelleman", "", "", false),
+        site("GE", "93QV+9M2 Skänninge", "", "Skänninge", "GE, \"GE ENERGY\"", "", "", false),
+        site("Universal Power", "93PW+J25 Skänninge", "", "Skänninge", "universal", "", "", false),
+        site("Runsven", "93JX+Q98 Skänninge", "", "Skänninge", "runsven", "borgmästaregatan 23, mjölbygatan 25", "", true),
+        site("Vestas", "93QR+5H8 Skänninge", "", "Skänninge", "vestas", "", "", false),
+        site("Aebi", "93PV+H3J Skänninge", "", "Skänninge", "aebi", "", "", false)
     )
 
     private fun site(

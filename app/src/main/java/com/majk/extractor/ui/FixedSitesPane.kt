@@ -91,8 +91,6 @@ private fun FixedSiteDialog(
     var recipient by remember { mutableStateOf(existing?.recipientKeywords.orEmpty()) }
     var addressKeys by remember { mutableStateOf(existing?.addressKeywords.orEmpty()) }
     var exclude by remember { mutableStateOf(existing?.excludeKeywords.orEmpty()) }
-    var requireZip by remember { mutableStateOf(existing?.requireZip.orEmpty()) }
-    var requireCity by remember { mutableStateOf(existing?.requireCity.orEmpty()) }
     var either by remember { mutableStateOf(existing?.matchEither ?: false) }
     var split by remember { mutableStateOf(existing?.splitByType ?: true) }
     var typeFilter by remember { mutableStateOf(existing?.typeFilter ?: "any") }
@@ -108,14 +106,12 @@ private fun FixedSiteDialog(
             ) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Canonical address") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = zip, onValueChange = { zip = it }, label = { Text("Zip (required if set)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = city, onValueChange = { city = it }, label = { Text("City (required if set)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = zip, onValueChange = { zip = it }, label = { Text("Zip") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = city, onValueChange = { city = it }, label = { Text("City") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = recipient, onValueChange = { recipient = it }, label = { Text("Recipient keywords") }, placeholder = { Text("toyota, tmh, \"Port K\"") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = addressKeys, onValueChange = { addressKeys = it }, label = { Text("Address keywords") }, placeholder = { Text("kyrkogatan, magasinsgatan") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = addressKeys, onValueChange = { addressKeys = it }, label = { Text("Address keywords") }, placeholder = { Text("kyrkogatan, magasinsgatan") }, supportingText = { Text("Use quotes to match a phrase as one string, e.g. \"Port K\".") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = exclude, onValueChange = { exclude = it }, label = { Text("Exclude keywords") }, placeholder = { Text("port f, gate f") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = requireZip, onValueChange = { requireZip = it }, label = { Text("Require zip") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = requireCity, onValueChange = { requireCity = it }, label = { Text("Require city") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Text("*GE* matches anywhere. GE is a whole word. GE* starts with, *GE ends with.", style = MaterialTheme.typography.bodySmall)
+                Text("* use asterisk as wildcard.", style = MaterialTheme.typography.bodySmall)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = either, onCheckedChange = { either = it })
                     Text("Match recipient or address")
@@ -146,8 +142,8 @@ private fun FixedSiteDialog(
                             address = address.trim(),
                             zip = zip.trim(),
                             city = city.trim(),
-                            requireZip = requireZip.trim(),
-                            requireCity = requireCity.trim(),
+                            requireZip = "",
+                            requireCity = "",
                             recipientKeywords = recipient.trim(),
                             addressKeywords = addressKeys.trim(),
                             excludeKeywords = exclude.trim(),
