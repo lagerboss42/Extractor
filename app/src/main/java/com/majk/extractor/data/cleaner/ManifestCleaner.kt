@@ -1,5 +1,6 @@
 package com.majk.extractor.data.cleaner
 
+import com.majk.extractor.data.db.FixedSiteStore
 import com.majk.extractor.data.model.Shipment
 import com.majk.extractor.data.model.ShipmentType
 import com.majk.extractor.util.AddressUtils
@@ -8,81 +9,6 @@ import com.majk.extractor.util.TextEncoding
 import com.majk.extractor.util.WeightUtils
 
 object ManifestCleaner {
-
-    private val PORT_K_KEYWORDS = listOf(
-        "BT", "TMH", "TMHS", "PORT K", "GATE K", "TOYOTA", "MATERIAL HANDLING", "HALLEVAD"
-    )
-
-    private val PORT_K_EXCLUDE = listOf("PORT F", "GATE F", "TRUCKHUSET")
-
-    private val PORT_F_KEYWORDS = listOf("PORT F", "GATE F", "TRUCKHUSET")
-
-    private val PORT_D_KEYWORDS = listOf("PORT D", "GATE D")
-
-    private val CLOETTA_KEYWORDS = listOf("CLOETTA")
-
-    private const val PORT_K_RECIPIENT = "Port K"
-    private const val PORT_K_ZIP = "59535"
-    private const val PORT_K_CITY = "Mjölby"
-    private const val PORT_K_ADDRESS = "8493+J2P Mjölby"
-
-    private const val PORT_F_RECIPIENT = "Port F"
-    private const val PORT_F_ZIP = "59535"
-    private const val PORT_F_CITY = "Mjölby"
-    private const val PORT_F_ADDRESS = "84C3+H7H Mjölby"
-
-    private const val PORT_D_RECIPIENT = "Port D"
-    private const val PORT_D_ZIP = "59535"
-    private const val PORT_D_CITY = "Mjölby"
-    private const val PORT_D_ADDRESS = "8496+2RC Mjölby"
-
-    /** Delivery / godsmottagning site. */
-    private const val CLOETTA_DEL_RECIPIENT = "Cloetta Godsmottagning"
-    private const val CLOETTA_DEL_ADDRESS = "GG72+6F Ljungsbro"
-    /** Pickup site (not the same as godsmottagning). */
-    private const val CLOETTA_PICK_RECIPIENT = "Cloetta"
-    private const val CLOETTA_PICK_ADDRESS = "GF7X+3V Ljungsbro"
-    private const val CLOETTA_ZIP = "58580"
-    private const val CLOETTA_CITY = "Ljungsbro"
-
-    private data class FixedSite(
-        val recipient: String,
-        val address: String,
-        val zip: String,
-        val city: String,
-        val match: (Shipment) -> Boolean
-    )
-
-    private val GE_WORD = Regex("""\bGE\b""")
-
-    private val FIXED_SITES = listOf(
-        FixedSite("ASM Foods", "84CJ+J3R Mjölby", "59530", "Mjölby") {
-            val rec = normalizeAscii(it.recipient)
-            val addr = normalizeAscii(it.address)
-            rec.contains("ASM") && (addr.contains("KYRKOGATAN") || addr.contains("MAGASINSGATAN"))
-        },
-        FixedSite("Nelleman", "93QW+43H Skänninge", "59631", "Skänninge") {
-            normalizeAscii(it.recipient).contains("NELLEMAN")
-        },
-        FixedSite("GE", "93QV+9M2 Skänninge", "59631", "Skänninge") {
-            val rec = normalizeAscii(it.recipient)
-            rec.contains("GE ENERGY") || GE_WORD.containsMatchIn(rec)
-        },
-        FixedSite("Universal Power", "93PW+J25 Skänninge", "59631", "Skänninge") {
-            normalizeAscii(it.recipient).contains("UNIVERSAL")
-        },
-        FixedSite("Runsven", "93JX+Q98 Skänninge", "59631", "Skänninge") {
-            val rec = normalizeAscii(it.recipient)
-            val addr = normalizeAscii(it.address).replace(" ", "")
-            rec.contains("RUNSVEN") || addr.contains("BORGMASTAREGATAN23") || addr.contains("MJOLBYGATAN25")
-        },
-        FixedSite("Vestas", "93QR+5H8 Skänninge", "59631", "Skänninge") {
-            normalizeAscii(it.recipient).contains("VESTAS")
-        },
-        FixedSite("Aebi", "93PV+H3J Skänninge", "59631", "Skänninge") {
-            normalizeAscii(it.recipient).contains("AEBI")
-        }
-    )
 
     fun cleanAndConsolidate(raw: List<Shipment>): List<Shipment> {
         val cleaned = raw.map { cleanSingle(it) }
@@ -226,13 +152,6 @@ object ManifestCleaner {
                         if (p.length > prev.length) out[out.lastIndex] = p
                         continue
                     }
-                    // Keep a slash-part that is a company name so Port K can still match.
-                    val folded = normalizeAscii(p)
-                    val company = listOf("TOYOTA", "TMH", "TMHS", "MATERIAL HANDLING", "PORT K", "GATE K", "HALLEVAD", "BT")
-                    if (company.any { it in folded }) {
-                        out.add(p)
-                        continue
-                    }
                     out.add(p)
                 }
             }
@@ -249,45 +168,25 @@ object ManifestCleaner {
     }
 
     private fun consolidate(list: List<Shipment>): List<Shipment> {
-        // Packages of the same shipment become one row. Weight is the sum of
-        // the package weights that are present. A 0 kg package adds nothing
-        // and is never given an invented weight.
         val folded = foldShipments(list)
-        val portK = mutableListOf<Shipment>()
-        val portF = mutableListOf<Shipment>()
-        val portD = mutableListOf<Shipment>()
-        val cloetta = mutableListOf<Shipment>()
-        val fixedBuckets = FIXED_SITES.map { mutableListOf<Shipment>() }
+        val sites = FixedSiteStore.all()
+        val buckets = sites.map { mutableListOf<Shipment>() }
         val rest = mutableListOf<Shipment>()
 
         for (s in folded) {
-            val site = FIXED_SITES.indexOfFirst { it.match(s) }
-            when {
-                isPortF(s) -> portF.add(s)
-                isPortD(s) -> portD.add(s)
-                isPortK(s) -> portK.add(s)
-                isCloetta(s) -> cloetta.add(s)
-                site >= 0 -> fixedBuckets[site].add(s)
-                else -> rest.add(s)
-            }
+            val idx = sites.indexOfFirst { it.matches(s) }
+            if (idx >= 0) buckets[idx].add(s) else rest.add(s)
         }
 
         val result = mutableListOf<Shipment>()
-        // Same-type only: never merge pickups with deliveries at a fixed site.
-        addFixedByType(result, portK, PORT_K_RECIPIENT, PORT_K_ADDRESS, PORT_K_ZIP, PORT_K_CITY)
-        addFixedByType(result, portF, PORT_F_RECIPIENT, PORT_F_ADDRESS, PORT_F_ZIP, PORT_F_CITY)
-        addFixedByType(result, portD, PORT_D_RECIPIENT, PORT_D_ADDRESS, PORT_D_ZIP, PORT_D_CITY)
-        // Cloetta pickup vs godsmottagning are different places + different recipient labels.
-        val cloettaPick = cloetta.filter { it.type == ShipmentType.PICK }
-        val cloettaDel = cloetta.filter { it.type != ShipmentType.PICK }
-        if (cloettaPick.isNotEmpty()) {
-            result.add(mergeFixedPort(cloettaPick, CLOETTA_PICK_RECIPIENT, CLOETTA_PICK_ADDRESS, CLOETTA_ZIP, CLOETTA_CITY))
-        }
-        if (cloettaDel.isNotEmpty()) {
-            result.add(mergeFixedPort(cloettaDel, CLOETTA_DEL_RECIPIENT, CLOETTA_DEL_ADDRESS, CLOETTA_ZIP, CLOETTA_CITY))
-        }
-        FIXED_SITES.forEachIndexed { i, site ->
-            addFixedByType(result, fixedBuckets[i], site.recipient, site.address, site.zip, site.city)
+        sites.forEachIndexed { i, site ->
+            val group = buckets[i]
+            if (group.isEmpty()) return@forEachIndexed
+            if (site.splitByType) {
+                addFixedByType(result, group, site.name, site.address, site.zip, site.city)
+            } else if (group.isNotEmpty()) {
+                result.add(mergeFixedPort(group, site.name, site.address, site.zip, site.city))
+            }
         }
 
         val grouped = rest.groupBy {
@@ -328,56 +227,6 @@ object ManifestCleaner {
         if ("LITIUMGATAN" in addr && s.zip == "60223") return true
         if (name.endsWith("TLAND AB") && name.length < 20) return true
         return false
-    }
-
-    private fun haystack(s: Shipment): String =
-        normalizeAscii(listOf(s.recipient, s.address, s.sender.orEmpty()).joinToString(" "))
-
-    private fun isMjolby(s: Shipment): Boolean {
-        val city = normalizeAscii(s.city).replace("OE", "O")
-        return "MJOLBY" in city
-    }
-
-    private fun isTruckgatan2(s: Shipment): Boolean {
-        val addr = normalizeAscii(s.address).replace(" ", "")
-        val zip = s.zip.filter { it.isDigit() }
-        return "TRUCKGATAN2" in addr && (zip.isEmpty() || zip == "59535")
-    }
-
-    /** Truckgatan 1 in Mjölby is Port F even when the recipient has no "Port F". */
-    private fun isTruckgatan1(s: Shipment): Boolean {
-        val addr = normalizeAscii(s.address).replace(" ", "")
-        val marker = "TRUCKGATAN1"
-        val i = addr.indexOf(marker)
-        if (i < 0) return false
-        val after = i + marker.length
-        if (after < addr.length && addr[after].isDigit()) return false
-        return isMjolby(s)
-    }
-
-    private fun isPortF(s: Shipment): Boolean {
-        if (isTruckgatan2(s) || isTruckgatan1(s)) return true
-        val h = haystack(s)
-        return PORT_F_KEYWORDS.any { normalizeAscii(it) in h }
-    }
-
-    private fun isPortD(s: Shipment): Boolean {
-        val h = haystack(s)
-        return PORT_D_KEYWORDS.any { normalizeAscii(it) in h }
-    }
-
-    private fun isPortK(s: Shipment): Boolean {
-        if (!isMjolby(s)) return false
-        if (isPortF(s) || isPortD(s)) return false
-        val h = haystack(s)
-        if (PORT_K_EXCLUDE.any { normalizeAscii(it) in h }) return false
-        if (isTruckgatan2(s) || isTruckgatan1(s)) return false
-        return PORT_K_KEYWORDS.any { normalizeAscii(it) in h }
-    }
-
-    private fun isCloetta(s: Shipment): Boolean {
-        val h = haystack(s)
-        return CLOETTA_KEYWORDS.any { normalizeAscii(it) in h }
     }
 
     private fun normalizeAscii(text: String): String =
@@ -430,9 +279,9 @@ object ManifestCleaner {
         return Shipment(
             type = type,
             recipient = recipient,
-            address = address,
-            zip = zip,
-            city = city,
+            address = address.ifBlank { group.first().address },
+            zip = zip.ifBlank { group.first().zip },
+            city = city.ifBlank { group.first().city },
             colliCount = group.sumOf { it.colliCount },
             weightKg = group.sumOf { it.weightKg },
             portkod = group.mapNotNull { it.portkod }.firstOrNull(),
@@ -441,8 +290,8 @@ object ManifestCleaner {
             lat = null,
             lon = null,
             earliestMinutes = group.mapNotNull { it.earliestMinutes }.minOrNull(),
-            // Earliest of the latest-times: a stop is due at the first deadline.
-            latestMinutes = group.mapNotNull { it.latestMinutes }.minOrNull()
+            latestMinutes = group.mapNotNull { it.latestMinutes }.minOrNull(),
+            fixedSiteName = recipient
         )
     }
 

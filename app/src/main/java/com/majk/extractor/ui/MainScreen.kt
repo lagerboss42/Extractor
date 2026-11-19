@@ -47,6 +47,8 @@ fun MainScreen() {
     var geocodeEnabled by remember { mutableStateOf(AppPreferences.geocodeEnabled) }
     var visibleSections by remember { mutableStateOf(AppPreferences.visibleSections()) }
     var activeFixedIds by remember { mutableStateOf(setOf<String>()) }
+    var reviewStops by remember { mutableStateOf<List<Shipment>?>(null) }
+    var reviewLabel by remember { mutableStateOf("Capture Excel") }
 
     LaunchedEffect(Unit) {
         CaptureRepository.init(context)
@@ -219,28 +221,41 @@ fun MainScreen() {
                 // carries both carriers; append only when the address is new.
                 val kkbShipments = AddressStore.applyPortkods(activeFixedShipments())
                 val combined = ManifestCleaner.mergeFixedStops(withCity, kkbShipments)
+                reviewLabel = label
+                reviewStops = combined
+                status = "Review ${combined.size} stops"
+            } catch (e: Exception) {
+                status = "Error: ${e.javaClass.simpleName}: ${e.message}"
+            } finally {
+                geocoding = false
+            }
+        }
+    }
 
-                status = if (geocodeEnabled) "Geocoding (${combined.size} stops)…" else "Writing Excel…"
+    fun writeReviewed(stops: List<Shipment>) {
+        scope.launch {
+            geocoding = true
+            status = if (geocodeEnabled) "Geocoding (${stops.size} stops)…" else "Writing Excel…"
+            try {
                 val filter = AppPreferences.geocodeZipFilter()
                 val withCoords = if (geocodeEnabled && filter !is AppPreferences.ZipFilter.None) {
                     try {
                         val allowed = (filter as? AppPreferences.ZipFilter.Only)?.zips
-                        Geocoder.geocodeAll(combined, allowed)
+                        Geocoder.geocodeAll(stops, allowed)
                     } catch (e: Exception) {
                         status = "Geocode skipped: ${e.message}"
-                        combined
+                        stops
                     }
                 } else {
-                    combined
+                    stops
                 }
                 val skipped = when (filter) {
-                    is AppPreferences.ZipFilter.None -> combined.size
-                    is AppPreferences.ZipFilter.Only -> combined.count { s ->
+                    is AppPreferences.ZipFilter.None -> stops.size
+                    is AppPreferences.ZipFilter.Only -> stops.count { s ->
                         s.lat == null && s.zip.filter { it.isDigit() } !in filter.zips
                     }
                     else -> 0
                 }
-
                 status = "Writing Excel…"
                 val file = ExcelGenerator.generate(context, withCoords)
                 val dest = UserDataStore.nextManifestFile()
@@ -249,19 +264,19 @@ fun MainScreen() {
                 } catch (_: Exception) {}
                 lastFile = dest.takeIf { it.exists() } ?: file
                 try {
-                    AddressStore.recordVisits(withPk)
+                    AddressStore.recordVisits(withCoords)
                 } catch (_: Exception) {
                 }
                 val geoCount = withCoords.count { it.lat != null }
-                val kkb = kkbShipments.size
-                val remembered = combined.count { it.portkodRemembered }
+                val remembered = withCoords.count { it.portkodRemembered }
                 val skipNote = when {
                     !geocodeEnabled -> ""
                     filter is AppPreferences.ZipFilter.None -> ", geocoding skipped (zip list invalid)"
                     skipped > 0 -> ", $skipped skipped (zip filter)"
                     else -> ""
                 }
-                status = "$label: ${withCoords.size} rows (${withPk.size} from Opter, $kkb kkböj, $remembered saved PK), $geoCount geocoded$skipNote"
+                status = "$reviewLabel: ${withCoords.size} rows, $remembered saved PK, $geoCount geocoded$skipNote"
+                reviewStops = null
             } catch (e: Exception) {
                 status = "Error: ${e.javaClass.simpleName}: ${e.message}"
             } finally {
@@ -293,6 +308,17 @@ fun MainScreen() {
         }
     }
 
+    val pending = reviewStops
+    if (pending != null) {
+        ReviewScreen(
+            stops = pending,
+            onChange = { reviewStops = it },
+            onWrite = { writeReviewed(reviewStops ?: pending) },
+            onCancel = { reviewStops = null }
+        )
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -300,7 +326,7 @@ fun MainScreen() {
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("Extractor", style = MaterialTheme.typography.headlineMedium)
+        Text("ExBeta", style = MaterialTheme.typography.headlineMedium)
         Text(status, style = MaterialTheme.typography.bodyMedium)
 
         Row(

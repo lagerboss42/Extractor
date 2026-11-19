@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import com.majk.extractor.data.db.AddressStore
+import com.majk.extractor.data.db.FixedSiteStore
 import com.majk.extractor.data.db.GeocodeStore
 import com.majk.extractor.data.prefs.AppPreferences
 import com.majk.extractor.data.storage.UserDataStore
@@ -50,6 +51,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         AddressStore.init(this)
         GeocodeStore.init(this)
+        FixedSiteStore.init(this)
         AppPreferences.init(this)
         UserDataStore.init(this)
         CaptureRepository.init(this)

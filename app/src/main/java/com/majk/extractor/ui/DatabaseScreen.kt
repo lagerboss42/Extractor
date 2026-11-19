@@ -81,6 +81,7 @@ fun DatabaseScreen() {
             Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Entry codes") })
             Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Visits") })
             Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Geocode") })
+            Tab(selected = tab == 3, onClick = { tab = 3 }, text = { Text("Fixed sites") })
         }
         if (tab == 0) {
             Row(
@@ -188,7 +189,7 @@ fun DatabaseScreen() {
                     }
                 }
             }
-        } else {
+        } else if (tab == 2) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -238,6 +239,8 @@ fun DatabaseScreen() {
                     }
                 }
             }
+        } else {
+            FixedSitesPane()
         }
     }
 
@@ -508,7 +511,10 @@ private fun VisitCard(row: VisitEntry, onLongPress: () -> Unit) {
             )
     ) {
         Column(Modifier.padding(12.dp)) {
-            Text(row.address, style = MaterialTheme.typography.titleSmall)
+            Text(row.recipient ?: row.address, style = MaterialTheme.typography.titleSmall)
+            if (row.recipient != null) {
+                Text(row.address, style = MaterialTheme.typography.bodySmall)
+            }
             Text(
                 listOf(row.zip, row.city).filter { it.isNotBlank() }.joinToString(" "),
                 style = MaterialTheme.typography.bodySmall

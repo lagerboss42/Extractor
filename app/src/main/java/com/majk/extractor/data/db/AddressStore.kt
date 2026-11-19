@@ -22,7 +22,8 @@ data class VisitEntry(
     val city: String,
     val shipments: Int,
     val totalWeight: Int,
-    val date: String
+    val date: String,
+    val recipient: String? = null
 )
 
 /**
@@ -101,6 +102,7 @@ object AddressStore {
                     put("address", label.address)
                     put("zip", label.zip)
                     put("city", label.city)
+                    put("recipient", label.recipient)
                     put("shipments", list.size)
                     put("total_weight", list.sumOf { it.weightKg })
                     put("visit_date", today)
@@ -121,45 +123,34 @@ object AddressStore {
 
     /**
      * Visit identity:
-     *  - Port K / D / F and Cloetta: one ID per consolidated site (and type).
-     *  - Region: group by address.
-     *  - Everything else: one group per unique recipient.
-     * Every shipment in the group adds to the count and weight.
+     *  - Fixed site: one row per site and type.
+     *  - Everything else, including Region: one row per address.
+     * Recipient is stored only for a fixed site.
      */
     private fun visitKey(s: Shipment): String {
-        val rec = s.recipient.trim()
-        val port = when {
-            rec.equals("Port K", true) -> "port:k"
-            rec.equals("Port D", true) -> "port:d"
-            rec.equals("Port F", true) -> "port:f"
-            rec.equals("Cloetta", true) || rec.equals("Cloetta Godsmottagning", true) ->
-                "cloetta:${rec.lowercase()}"
-            else -> null
-        }
-        if (port != null) return "$port|${s.type.name}"
-        if (s.carrier.startsWith("Region", ignoreCase = true)) {
-            val ak = addressKey(s)
-            return if (ak.isNotBlank()) "addr:$ak" else ""
-        }
-        val name = rec.lowercase()
-            .replace("å", "a").replace("ä", "a").replace("ö", "o")
-            .replace(Regex("[^a-z0-9]"), "")
-        return if (name.length >= 2) "recip:$name" else ""
+        val site = s.fixedSiteName?.trim().orEmpty()
+        if (site.isNotEmpty()) return "site:${site.lowercase()}|${s.type.name}"
+        val ak = addressKey(s)
+        return if (ak.isNotBlank()) "addr:$ak" else ""
     }
 
-    private data class VisitLabel(val address: String, val zip: String, val city: String)
+    private data class VisitLabel(
+        val address: String,
+        val zip: String,
+        val city: String,
+        val recipient: String?
+    )
 
     private fun visitLabel(list: List<Shipment>): VisitLabel {
         val first = list.first()
-        val rec = first.recipient.trim()
+        val site = first.fixedSiteName?.trim()?.takeIf { it.isNotEmpty() }
         val isRegion = first.carrier.startsWith("Region", ignoreCase = true)
-        val address = when {
-            rec.equals("Port K", true) || rec.equals("Port D", true) || rec.equals("Port F", true) -> rec
-            rec.equals("Cloetta", true) || rec.equals("Cloetta Godsmottagning", true) -> rec
-            isRegion -> first.address
-            else -> rec.ifBlank { first.address }
-        }
-        return VisitLabel(address, first.zip, first.city)
+        return VisitLabel(
+            address = first.address,
+            zip = first.zip,
+            city = first.city,
+            recipient = if (isRegion) null else site
+        )
     }
 
     fun searchCodes(query: String): List<PkEntry> {
@@ -192,13 +183,13 @@ object AddressStore {
     fun searchVisits(query: String): List<VisitEntry> {
         val q = "%${query.trim()}%"
         val sql = """
-            SELECT address, zip, city, shipments, total_weight, visit_date
+            SELECT address, zip, city, shipments, total_weight, visit_date, recipient
             FROM address_log
-            WHERE address LIKE ? OR zip LIKE ? OR city LIKE ?
+            WHERE address LIKE ? OR zip LIKE ? OR city LIKE ? OR recipient LIKE ?
             ORDER BY visit_date DESC, address COLLATE NOCASE
         """.trimIndent()
         val out = mutableListOf<VisitEntry>()
-        visitsDb().rawQuery(sql, arrayOf(q, q, q)).use { c ->
+        visitsDb().rawQuery(sql, arrayOf(q, q, q, q)).use { c ->
             while (c.moveToNext()) {
                 out.add(
                     VisitEntry(
@@ -207,7 +198,8 @@ object AddressStore {
                         city = c.getString(2).orEmpty(),
                         shipments = c.getInt(3),
                         totalWeight = c.getInt(4),
-                        date = c.getString(5)
+                        date = c.getString(5),
+                        recipient = c.getString(6)?.takeIf { it.isNotBlank() }
                     )
                 )
             }
@@ -529,10 +521,14 @@ object AddressStore {
                         shipments INTEGER NOT NULL,
                         total_weight INTEGER NOT NULL,
                         visit_date TEXT NOT NULL,
+                        recipient TEXT,
                         PRIMARY KEY (address_key, visit_date)
                     )
                     """.trimIndent()
                 )
+                if (!columnExists(db, "address_log", "recipient")) {
+                    db.execSQL("ALTER TABLE address_log ADD COLUMN recipient TEXT")
+                }
             }
         }
 

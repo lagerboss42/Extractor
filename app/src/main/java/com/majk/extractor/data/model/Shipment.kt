@@ -47,6 +47,8 @@ data class Shipment(
     val consolidated: Boolean = false,
     /** Apartment / LGH number extracted from binary field 5 or DEL number suffix. Number only. */
     val lgh: String? = null,
+    /** Canonical fixed-site name when this row was consolidated or assigned to one. */
+    val fixedSiteName: String? = null,
     /** True when the city cell should be highlighted red (mismatch with postort lookup). */
     val cityMismatch: Boolean = false,
     /** True when the zip cell should be highlighted red (mismatch with postort lookup). */
