@@ -28,17 +28,17 @@ import com.majk.extractor.data.model.FixedStop
 import com.majk.extractor.data.model.FixedStops
 import com.majk.extractor.data.model.Shipment
 import com.majk.extractor.data.model.ShipmentType
+import com.majk.extractor.vpn.CaptureRepository
+import com.majk.extractor.vpn.LocalVpnService
+import com.majk.extractor.vpn.VpnStatus
+import kotlinx.coroutines.launch
+import java.io.File
 
 /** Holds the review list across tab changes. Cleared only on Write or Cancel. */
 object ReviewHold {
     var stops: List<Shipment>? = null
     var label: String = "Capture Excel"
 }
-import com.majk.extractor.vpn.CaptureRepository
-import com.majk.extractor.vpn.LocalVpnService
-import com.majk.extractor.vpn.VpnStatus
-import kotlinx.coroutines.launch
-import java.io.File
 
 @Composable
 fun MainScreen() {
