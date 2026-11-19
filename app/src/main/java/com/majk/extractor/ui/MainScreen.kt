@@ -36,7 +36,7 @@ import java.io.File
 
 /** Holds the review list across tab changes. Cleared only on Write or Cancel. */
 object ReviewHold {
-    var stops: List<Shipment>? = null
+    var stops by mutableStateOf<List<Shipment>?>(null)
     var label: String = "Capture Excel"
 }
 
