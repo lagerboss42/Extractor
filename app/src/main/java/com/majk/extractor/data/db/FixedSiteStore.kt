@@ -111,7 +111,6 @@ data class FixedSiteRule(
  */
 object FixedSiteStore {
 
-    @Volatile
     var revision by mutableStateOf(0)
         private set
 
