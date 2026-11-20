@@ -1,10 +1,9 @@
 package com.majk.extractor.ui
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -49,7 +48,6 @@ fun DatabaseScreen() {
 
     var menuTarget by remember { mutableStateOf<DbTarget?>(null) }
     var showModify by remember { mutableStateOf(false) }
-    var showRemove by remember { mutableStateOf(false) }
     var showAddCode by remember { mutableStateOf(false) }
     var showClearCodes by remember { mutableStateOf(false) }
     var showClearVisits by remember { mutableStateOf(false) }
@@ -109,34 +107,10 @@ fun DatabaseScreen() {
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(codes, key = { it.id }) { row ->
-                    Box {
-                        PkCard(
-                            row = row,
-                            onLongPress = { menuTarget = DbTarget.Code(row) }
-                        )
-                        DropdownMenu(
-                            expanded = !showModify && !showRemove && menuTarget is DbTarget.Code &&
-                                (menuTarget as DbTarget.Code).entry == row,
-                            onDismissRequest = {
-                                if (!showModify && !showRemove) menuTarget = null
-                            }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Modify") },
-                                onClick = {
-                                    menuTarget = DbTarget.Code(row)
-                                    showModify = true
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Remove", color = Color(0xFFFF6B6B)) },
-                                onClick = {
-                                    menuTarget = DbTarget.Code(row)
-                                    showRemove = true
-                                }
-                            )
-                        }
-                    }
+                    PkCard(row = row, onClick = {
+                        menuTarget = DbTarget.Code(row)
+                        showModify = true
+                    })
                 }
             }
         } else if (tab == 1) {
@@ -159,34 +133,10 @@ fun DatabaseScreen() {
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(visits, key = { "${it.address}|${it.zip}|${it.date}" }) { row ->
-                    Box {
-                        VisitCard(
-                            row = row,
-                            onLongPress = { menuTarget = DbTarget.Visit(row) }
-                        )
-                        DropdownMenu(
-                            expanded = !showModify && !showRemove && menuTarget is DbTarget.Visit &&
-                                (menuTarget as DbTarget.Visit).entry == row,
-                            onDismissRequest = {
-                                if (!showModify && !showRemove) menuTarget = null
-                            }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Modify") },
-                                onClick = {
-                                    menuTarget = DbTarget.Visit(row)
-                                    showModify = true
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Remove", color = Color(0xFFFF6B6B)) },
-                                onClick = {
-                                    menuTarget = DbTarget.Visit(row)
-                                    showRemove = true
-                                }
-                            )
-                        }
-                    }
+                    VisitCard(row = row, onClick = {
+                        menuTarget = DbTarget.Visit(row)
+                        showModify = true
+                    })
                 }
             }
         } else if (tab == 2) {
@@ -209,34 +159,10 @@ fun DatabaseScreen() {
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(geocodes, key = { "${it.address}|${it.zip}|${it.city}" }) { row ->
-                    Box {
-                        GeocodeCard(
-                            row = row,
-                            onLongPress = { menuTarget = DbTarget.Geo(row) }
-                        )
-                        DropdownMenu(
-                            expanded = !showModify && !showRemove && menuTarget is DbTarget.Geo &&
-                                (menuTarget as DbTarget.Geo).entry == row,
-                            onDismissRequest = {
-                                if (!showModify && !showRemove) menuTarget = null
-                            }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Modify") },
-                                onClick = {
-                                    menuTarget = DbTarget.Geo(row)
-                                    showModify = true
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Remove", color = Color(0xFFFF6B6B)) },
-                                onClick = {
-                                    menuTarget = DbTarget.Geo(row)
-                                    showRemove = true
-                                }
-                            )
-                        }
-                    }
+                    GeocodeCard(row = row, onClick = {
+                        menuTarget = DbTarget.Geo(row)
+                        showModify = true
+                    })
                 }
             }
         } else {
@@ -331,6 +257,11 @@ fun DatabaseScreen() {
                         menuTarget = null
                     }
                     ok
+                },
+                onDelete = {
+                    AddressStore.deleteCode(t.entry.id)
+                    showModify = false
+                    menuTarget = null
                 }
             )
             is DbTarget.Visit -> ModifyVisitDialog(
@@ -356,6 +287,11 @@ fun DatabaseScreen() {
                         menuTarget = null
                     }
                     ok
+                },
+                onDelete = {
+                    AddressStore.deleteVisit(t.entry.address, t.entry.zip, t.entry.date)
+                    showModify = false
+                    menuTarget = null
                 }
             )
             is DbTarget.Geo -> ModifyGeoDialog(
@@ -383,50 +319,10 @@ fun DatabaseScreen() {
                     showModify = false
                     menuTarget = null
                     true
-                }
-            )
-            null -> {}
-        }
-    }
-
-    if (showRemove) {
-        when (val t = menuTarget) {
-            is DbTarget.Code -> RemoveConfirmDialog(
-                title = "Remove entry code?",
-                summary = "${t.entry.address}\n{${t.entry.code}}",
-                onDismiss = {
-                    showRemove = false
-                    menuTarget = null
                 },
-                onConfirmed = {
-                    AddressStore.deleteCode(t.entry.id)
-                    showRemove = false
-                    menuTarget = null
-                }
-            )
-            is DbTarget.Visit -> RemoveConfirmDialog(
-                title = "Remove visit?",
-                summary = "${t.entry.address}\n${t.entry.shipments} · ${t.entry.totalWeight} kg · ${t.entry.date}",
-                onDismiss = {
-                    showRemove = false
-                    menuTarget = null
-                },
-                onConfirmed = {
-                    AddressStore.deleteVisit(t.entry.address, t.entry.zip, t.entry.date)
-                    showRemove = false
-                    menuTarget = null
-                }
-            )
-            is DbTarget.Geo -> RemoveConfirmDialog(
-                title = "Remove cached lookup?",
-                summary = "${t.entry.address}\n${t.entry.plusCode.ifBlank { "no match" }}",
-                onDismiss = {
-                    showRemove = false
-                    menuTarget = null
-                },
-                onConfirmed = {
+                onDelete = {
                     GeocodeStore.delete(t.entry.address, t.entry.zip, t.entry.city)
-                    showRemove = false
+                    showModify = false
                     menuTarget = null
                 }
             )
@@ -435,16 +331,12 @@ fun DatabaseScreen() {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PkCard(row: PkEntry, onLongPress: () -> Unit) {
+private fun PkCard(row: PkEntry, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(
-                onClick = {},
-                onLongClick = onLongPress
-            )
+            .clickable(onClick = onClick)
     ) {
         Column(Modifier.padding(12.dp)) {
             Text(row.recipient ?: row.address, style = MaterialTheme.typography.titleSmall)
@@ -465,16 +357,12 @@ private fun PkCard(row: PkEntry, onLongPress: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GeocodeCard(row: GeocodeEntry, onLongPress: () -> Unit) {
+private fun GeocodeCard(row: GeocodeEntry, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(
-                onClick = {},
-                onLongClick = onLongPress
-            )
+            .clickable(onClick = onClick)
     ) {
         Column(Modifier.padding(12.dp)) {
             Text(row.address.ifBlank { "(no address)" }, style = MaterialTheme.typography.titleSmall)
@@ -499,16 +387,12 @@ private fun GeocodeCard(row: GeocodeEntry, onLongPress: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun VisitCard(row: VisitEntry, onLongPress: () -> Unit) {
+private fun VisitCard(row: VisitEntry, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(
-                onClick = {},
-                onLongClick = onLongPress
-            )
+            .clickable(onClick = onClick)
     ) {
         Column(Modifier.padding(12.dp)) {
             Text(row.recipient ?: row.address, style = MaterialTheme.typography.titleSmall)
@@ -531,7 +415,8 @@ private fun VisitCard(row: VisitEntry, onLongPress: () -> Unit) {
 private fun ModifyCodeDialog(
     entry: PkEntry,
     onDismiss: () -> Unit,
-    onSave: (code: String, recipient: String?, address: String, zip: String, city: String) -> Boolean
+    onSave: (code: String, recipient: String?, address: String, zip: String, city: String) -> Boolean,
+    onDelete: () -> Unit
 ) {
     var code by remember { mutableStateOf(entry.code) }
     var recipient by remember { mutableStateOf(entry.recipient.orEmpty()) }
@@ -556,6 +441,8 @@ private fun ModifyCodeDialog(
                 OutlinedTextField(value = zip, onValueChange = { zip = it }, label = { Text("Zip") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = city, onValueChange = { city = it }, label = { Text("City") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 if (error != null) Text(error!!, color = Color(0xFFFF6B6B), style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                HoldToRemove(onRemove = onDelete)
             }
         },
         confirmButton = {
@@ -577,7 +464,8 @@ private fun ModifyCodeDialog(
 private fun ModifyVisitDialog(
     entry: VisitEntry,
     onDismiss: () -> Unit,
-    onSave: (address: String, zip: String, city: String, shipments: Int, weight: Int, date: String) -> Boolean
+    onSave: (address: String, zip: String, city: String, shipments: Int, weight: Int, date: String) -> Boolean,
+    onDelete: () -> Unit
 ) {
     var address by remember { mutableStateOf(entry.address) }
     var zip by remember { mutableStateOf(entry.zip) }
@@ -628,6 +516,8 @@ private fun ModifyVisitDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (error != null) Text(error!!, color = Color(0xFFFF6B6B), style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                HoldToRemove(onRemove = onDelete)
             }
         },
         confirmButton = {
@@ -729,7 +619,8 @@ private fun RemoveConfirmDialog(
 private fun ModifyGeoDialog(
     entry: GeocodeEntry,
     onDismiss: () -> Unit,
-    onSave: (address: String, zip: String, city: String, plusCode: String, lat: Double, lon: Double) -> Boolean
+    onSave: (address: String, zip: String, city: String, plusCode: String, lat: Double, lon: Double) -> Boolean,
+    onDelete: () -> Unit
 ) {
     var address by remember { mutableStateOf(entry.address) }
     var zip by remember { mutableStateOf(entry.zip) }
@@ -808,6 +699,8 @@ private fun ModifyGeoDialog(
                     }
                 }
                 if (error != null) Text(error!!, color = Color(0xFFFF6B6B), style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                HoldToRemove(onRemove = onDelete)
             }
         },
         confirmButton = {
