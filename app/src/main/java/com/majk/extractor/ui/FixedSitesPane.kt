@@ -1,34 +1,76 @@
 package com.majk.extractor.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.majk.extractor.data.db.FixedSiteRule
 import com.majk.extractor.data.db.FixedSiteStore
 import java.util.UUID
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 private val DisabledGrey = Color(0xFF9E9E9E)
 
 @Composable
-fun FixedSitesPane() {
+fun FixedSitesPane(modifier: Modifier = Modifier) {
     val sites = remember(FixedSiteStore.revision) { FixedSiteStore.all() }
     var editing by remember { mutableStateOf<FixedSiteRule?>(null) }
     var adding by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    val listState = rememberLazyListState()
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // While a row is held at the top or bottom edge, keep scrolling and stepping it.
+    LaunchedEffect(dragging) {
+        val id = dragging ?: return@LaunchedEffect
+        var ticks = 0
+        while (isActive && dragging == id) {
+            val info = listState.layoutInfo
+            val item = info.visibleItemsInfo.firstOrNull { it.key == id }
+            if (item != null) {
+                val edge = 80
+                val shift = dragOffset.toInt()
+                val top = item.offset + shift
+                val bottom = top + item.size
+                val topGap = top - info.viewportStartOffset
+                val bottomGap = info.viewportEndOffset - bottom
+                val stepItem = ticks % 3 == 0
+                when {
+                    topGap < edge && listState.canScrollBackward -> {
+                        listState.scrollBy(-28f)
+                        if (stepItem) FixedSiteStore.move(id, up = true, persist = false)
+                    }
+                    bottomGap < edge && listState.canScrollForward -> {
+                        listState.scrollBy(28f)
+                        if (stepItem) FixedSiteStore.move(id, up = false, persist = false)
+                    }
+                }
+            }
+            ticks++
+            delay(16)
+        }
+    }
+
+    Column(modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             "${sites.size} sites · tap to edit · hold ⋮⋮ and drag",
             style = MaterialTheme.typography.bodySmall
@@ -36,15 +78,28 @@ fun FixedSitesPane() {
         Button(onClick = { adding = true }, modifier = Modifier.fillMaxWidth()) {
             Text("+ Add fixed site")
         }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             items(sites, key = { it.id }) { site ->
                 val muted = !site.enabled
+                val held = dragging == site.id
+                var rowHeight by remember(site.id) { mutableFloatStateOf(0f) }
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .animateItem()
+                        .onSizeChanged { rowHeight = it.height.toFloat() }
+                        .zIndex(if (held) 1f else 0f)
+                        .graphicsLayer {
+                            translationY = if (held) dragOffset else 0f
+                            shadowElevation = if (held) 12f else 0f
+                        }
                         .clickable {
-                            editing = FixedSiteStore.all().firstOrNull { it.id == site.id } ?: site
+                            if (dragging == null) {
+                                editing = FixedSiteStore.all().firstOrNull { it.id == site.id } ?: site
+                            }
                         }
                 ) {
                     Row(
@@ -76,42 +131,60 @@ fun FixedSitesPane() {
                                 color = if (muted) DisabledGrey else Color.Unspecified
                             )
                         }
-                        Text(
-                            "⋮⋮",
-                            color = if (dragging == site.id) MaterialTheme.colorScheme.primary else DisabledGrey,
+                        Box(
                             modifier = Modifier
-                                .padding(start = 12.dp)
+                                .padding(start = 8.dp)
+                                .size(width = 44.dp, height = 52.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (dragging == site.id) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.primaryContainer
+                                )
                                 .pointerInput(site.id) {
                                     var accum = 0f
-                                    val threshold = 56.dp.toPx()
                                     detectDragGesturesAfterLongPress(
                                         onDragStart = {
                                             dragging = site.id
                                             accum = 0f
+                                            dragOffset = 0f
                                         },
                                         onDragEnd = {
                                             dragging = null
+                                            dragOffset = 0f
                                             FixedSiteStore.persist()
                                         },
                                         onDragCancel = {
                                             dragging = null
+                                            dragOffset = 0f
                                             FixedSiteStore.persist()
                                         },
                                         onDrag = { change, drag ->
                                             change.consume()
+                                            val step = rowHeight.coerceAtLeast(64.dp.toPx())
                                             accum += drag.y
-                                            while (accum > threshold) {
+                                            dragOffset = accum
+                                            while (accum > step) {
                                                 FixedSiteStore.move(site.id, up = false, persist = false)
-                                                accum -= threshold
+                                                accum -= step
+                                                dragOffset = accum
                                             }
-                                            while (accum < -threshold) {
+                                            while (accum < -step) {
                                                 FixedSiteStore.move(site.id, up = true, persist = false)
-                                                accum += threshold
+                                                accum += step
+                                                dragOffset = accum
                                             }
                                         }
                                     )
-                                }
-                        )
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "⋮⋮",
+                                color = if (dragging == site.id) MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onPrimaryContainer,
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
                     }
                 }
             }

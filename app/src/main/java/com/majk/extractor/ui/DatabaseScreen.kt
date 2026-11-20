@@ -166,7 +166,7 @@ fun DatabaseScreen() {
                 }
             }
         } else {
-            FixedSitesPane()
+            FixedSitesPane(Modifier.weight(1f))
         }
     }
 
