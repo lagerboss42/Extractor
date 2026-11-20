@@ -5,8 +5,8 @@ import com.majk.extractor.data.model.ShipmentType
 import com.majk.extractor.util.AddressUtils
 import com.majk.extractor.util.CarrierNames
 import com.majk.extractor.util.TextEncoding
+import com.majk.extractor.util.WeightUtils
 import java.util.regex.Pattern
-import kotlin.math.ceil
 
 object OpterHttpParser {
 
@@ -70,9 +70,37 @@ object OpterHttpParser {
             // Entry codes and coords live on the list-load address, not on DEL.
             // Copy them onto the matching DEL row instead of dropping them.
             val enriched = del.map { d -> enrichFromBinary(d, binary) }
-            return enriched + extras
+            return attachCoordsByShipmentId(enriched + extras, payload)
         }
-        return (embedded + binary).filter { !isJunk(it) }
+        return attachCoordsByShipmentId((embedded + binary).filter { !isJunk(it) }, payload)
+    }
+
+    /**
+     * Coords sit in a free-text field after a name and a phone number:
+     * "Johan:(+46) 70 300 82 72 58.544853, 15.633303". The same field carries
+     * the shipment id, so match on that instead of the nearest address.
+     */
+    private fun attachCoordsByShipmentId(list: List<Shipment>, payload: String): List<Shipment> {
+        if (list.isEmpty()) return list
+        val known = list.mapNotNull { it.shipmentId }.filter { it.isNotBlank() }.toSet()
+        if (known.isEmpty()) return list
+        val pattern = Regex("""(5[6-9][.,]\d{4,8})\s*[,;\s]\s*(1[0-9][.,]\d{4,8})""")
+        val byShipment = mutableMapOf<String, Pair<Double, Double>>()
+        for (hit in pattern.findAll(payload)) {
+            val lat = hit.groupValues[1].replace(',', '.').toDoubleOrNull() ?: continue
+            val lon = hit.groupValues[2].replace(',', '.').toDoubleOrNull() ?: continue
+            if (lat in 58.414..58.416 && lon in 15.662..15.664) continue
+            val from = (hit.range.first - 120).coerceAtLeast(0)
+            val before = payload.substring(from, hit.range.first)
+            val id = known.filter { it in before }.maxByOrNull { before.lastIndexOf(it) } ?: continue
+            byShipment.putIfAbsent(id, lat to lon)
+        }
+        if (byShipment.isEmpty()) return list
+        return list.map { s ->
+            if (s.lat != null) return@map s
+            val coords = s.shipmentId?.let { byShipment[it] } ?: return@map s
+            s.copy(lat = coords.first, lon = coords.second)
+        }
     }
 
     private fun enrichFromBinary(del: Shipment, binary: List<Shipment>): Shipment {
@@ -132,10 +160,12 @@ object OpterHttpParser {
                 val recipientNumber = fields.getOrNull(DelCol.RECIPIENT_NUMBER)?.trim().orEmpty()
                 val recipientZip = fields.getOrNull(DelCol.RECIPIENT_ZIP)?.trim()?.filter { it.isDigit() }?.take(5).orEmpty()
                 val carrierRaw = TextEncoding.fixSwedish(fields.getOrNull(DelCol.CARRIER)?.trim().orEmpty())
-                val weightRaw = pickWeight(
-                    fields.getOrNull(DelCol.WEIGHT_A),
-                    fields.getOrNull(DelCol.WEIGHT_B)
-                )
+                val packageKg = parseWeightRaw(fields.getOrNull(DelCol.WEIGHT_B))
+                val shipmentKg = parseWeightRaw(fields.getOrNull(DelCol.WEIGHT_A))
+                // Column 40 is this colli's weight. Column 39 is the shipment
+                // total, repeated on every line. Keep them apart so a 0 kg
+                // colli is never given the shipment total.
+                val weight = WeightUtils.roundToWhole(packageKg)
                 val colliRaw = fields.getOrNull(DelCol.COLLI)?.trim().orEmpty()
                 val portkodRaw = fields.getOrNull(DelCol.RECIPIENT_PK)?.trim().orEmpty()
 
@@ -182,7 +212,6 @@ object OpterHttpParser {
                 } else null
 
                 val colli = colliRaw.toIntOrNull()?.coerceAtLeast(0) ?: 1
-                val weight = parseWeight(weightRaw)
                 val carrier = CarrierNames.shorten(carrierRaw)
                 // A distinct package line is 1 colli. Column 45 is often the
                 // shipment total and must not be copied onto every package.
@@ -209,6 +238,8 @@ object OpterHttpParser {
                         city = resolved.city,
                         colliCount = packageColli,
                         weightKg = weight,
+                        packageWeightKg = packageKg,
+                        shipmentWeightKg = shipmentKg,
                         portkod = portkod,
                         comment = nameNote,
                         carrier = resolvedCarrier,
@@ -223,7 +254,26 @@ object OpterHttpParser {
             } catch (_: Exception) {
             }
         }
-        return consolidateByRawId(shipments)
+        return normalizeShipmentWeight(consolidateByRawId(shipments))
+    }
+
+    /**
+     * Column 40 is the colli weight. Column 39 is the shipment total, repeated
+     * on every package line. Sum the colli weights. If none are set, use the
+     * shipment total once. Round the total, not each colli.
+     */
+    private fun normalizeShipmentWeight(list: List<Shipment>): List<Shipment> {
+        val grouped = list.groupBy { it.shipmentId?.takeIf { id -> id.isNotBlank() } ?: it.rawId ?: it.hashCode().toString() }
+        return grouped.flatMap { (_, group) ->
+            val packageSum = group.sumOf { it.packageWeightKg }
+            val shipmentTotal = group.maxOfOrNull { it.shipmentWeightKg } ?: 0.0
+            val total = WeightUtils.roundToWhole(if (packageSum > 0) packageSum else shipmentTotal)
+            if (group.size == 1) {
+                listOf(group.first().copy(weightKg = total))
+            } else {
+                group.mapIndexed { i, s -> s.copy(weightKg = if (i == 0) total else 0) }
+            }
+        }
     }
 
     /** Recipient field is sometimes "NAME / note". Keep a real instruction as a note.
@@ -319,26 +369,10 @@ object OpterHttpParser {
             else -> "$street $number"
         }.trim()
 
-    /** Prefer a non-zero weight. Column 40 is often 0 while column 39 holds the real value. */
-    private fun pickWeight(a: String?, b: String?): String {
-        val sa = a?.trim().orEmpty()
-        val sb = b?.trim().orEmpty()
-        val va = parseWeight(sa)
-        val vb = parseWeight(sb)
-        return when {
-            vb > 0 -> sb
-            va > 0 -> sa
-            sb.isNotEmpty() -> sb
-            else -> sa
-        }
-    }
-
-    private fun parseWeight(raw: String): Int {
-        if (raw.isBlank()) return 0
+    private fun parseWeightRaw(raw: String?): Double {
+        if (raw.isNullOrBlank()) return 0.0
         val normalized = raw.replace(",", ".").replace(Regex("[^0-9.]"), "")
-        return normalized.toDoubleOrNull()?.let { v ->
-            if (v <= 0.0) 0 else ceil(v - 1e-9).toInt()
-        } ?: 0
+        return normalized.toDoubleOrNull()?.takeIf { it > 0.0 } ?: 0.0
     }
 
     private fun parseDelTimeWindow(a: String?, b: String?): Pair<Int?, Int?> {
@@ -400,6 +434,8 @@ object OpterHttpParser {
                 first.copy(
                     colliCount = group.sumOf { it.colliCount },
                     weightKg = group.sumOf { it.weightKg },
+                    packageWeightKg = group.sumOf { it.packageWeightKg },
+                    shipmentWeightKg = group.maxOf { it.shipmentWeightKg },
                     portkod = group.mapNotNull { it.portkod }.firstOrNull(),
                     comment = group.mapNotNull { it.comment }.firstOrNull(),
                     lgh = group.mapNotNull { it.lgh }.firstOrNull(),

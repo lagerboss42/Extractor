@@ -21,6 +21,10 @@ data class Shipment(
     val city: String,
     val colliCount: Int,
     val weightKg: Int,
+    /** This colli's own weight (DEL column 40). 0 when the colli has none. */
+    val packageWeightKg: Double = 0.0,
+    /** Shipment total (DEL column 39). Repeated on every package line, so never sum it. */
+    val shipmentWeightKg: Double = 0.0,
     val portkod: String?,
     /** Free-text notes from shipment detail (e.g. "Fullmakt ytterdörr", "Ring 30 min") */
     val comment: String?,

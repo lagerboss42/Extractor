@@ -320,7 +320,7 @@ object ManifestCleaner {
         // Prefer the package that carries the weight, so a 0 kg line
         // does not decide the address or recipient. Scan every package;
         // the weighted one may not be the first.
-        val base = group.maxByOrNull { it.weightKg } ?: group.first()
+        val base = group.maxByOrNull { it.packageWeightKg } ?: group.maxByOrNull { it.weightKg } ?: group.first()
         // Distinct packages only. Drop a master line whose colli already
         // equals the number of other lines so it is not counted twice.
         val packageLines = if (group.size > 1) {
@@ -328,7 +328,14 @@ object ManifestCleaner {
             group.filter { it.colliCount != others || others == 0 }
         } else group
         val colli = if (packageLines.isEmpty()) group.size else packageLines.size
-        val weight = group.sumOf { it.weightKg }
+        val packageSum = group.sumOf { it.packageWeightKg }
+        val shipmentTotal = group.maxOfOrNull { it.shipmentWeightKg } ?: 0.0
+        val weight = when {
+            packageSum > 0.0 -> WeightUtils.roundToWhole(packageSum)
+            shipmentTotal > 0.0 -> WeightUtils.roundToWhole(shipmentTotal)
+            group.size > 1 && group.all { it.weightKg == group.first().weightKg } -> group.first().weightKg
+            else -> group.sumOf { it.weightKg }
+        }
         return base.copy(
             colliCount = colli,
             weightKg = weight,

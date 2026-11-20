@@ -224,20 +224,22 @@ object OpterBinaryParser {
 
     private fun attachFreeTextCoords(fields: List<Tlv>, addrs: List<Addr>) {
         if (addrs.isEmpty()) return
+        val hits = mutableListOf<Triple<Int, Double, Double>>()
         for (f in fields) {
             val m = COORD_PATTERN.matcher(f.value)
             if (!m.find()) continue
-            val latStr = m.group(1).replace(',', '.')
-            val lonStr = m.group(2).replace(',', '.')
-            val lat = latStr.toDoubleOrNull() ?: continue
-            val lon = lonStr.toDoubleOrNull() ?: continue
+            val lat = m.group(1).replace(',', '.').toDoubleOrNull() ?: continue
+            val lon = m.group(2).replace(',', '.').toDoubleOrNull() ?: continue
             if (lat in 58.414..58.416 && lon in 15.662..15.664) continue
-            val candidates = addrs.filter { !it.isTerminal && !it.isSenderSide }
-            val nearest = candidates.minByOrNull { kotlin.math.abs(it.offset - f.offset) } ?: continue
-            if (nearest.lat == null) {
-                nearest.lat = lat
-                nearest.lon = lon
-            }
+            hits.add(Triple(f.offset, lat, lon))
+        }
+        val open = addrs.filter { !it.isTerminal && !it.isSenderSide }.toMutableList()
+        for ((offset, lat, lon) in hits) {
+            val target = open.filter { it.lat == null }
+                .minByOrNull { kotlin.math.abs(it.offset - offset) }
+                ?: continue
+            target.lat = lat
+            target.lon = lon
         }
     }
 
