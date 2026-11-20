@@ -112,32 +112,41 @@ fun MainScreen() {
     }
 
     val capturePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
         scope.launch {
-            try {
-                // Preserve extension so .pcap is not parsed as text.
-                val name = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
-                    val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+            var addedTotal = 0
+            var failed = 0
+            var total = CaptureRepository.lastParseCount
+            for ((index, uri) in uris.withIndex()) {
+                try {
+                    val name = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                        val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
+                    }
+                    val ext = name?.substringAfterLast('.', "")?.lowercase()?.takeIf { it in listOf("pcap", "pcapng", "txt", "log") }
+                        ?: "bin"
+                    val dest = File(context.cacheDir, "capture_${System.currentTimeMillis()}_$index.$ext")
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        dest.outputStream().use { input.copyTo(it) }
+                    }
+                    val (added, now) = CaptureRepository.loadCaptureFileAdditive(dest)
+                    if (added < 0) failed++ else {
+                        addedTotal += added
+                        total = now
+                    }
+                } catch (_: Exception) {
+                    failed++
                 }
-                val ext = name?.substringAfterLast('.', "")?.lowercase()?.takeIf { it in listOf("pcap", "pcapng", "txt", "log") }
-                    ?: "bin"
-                val dest = File(context.cacheDir, "capture_${System.currentTimeMillis()}.$ext")
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    dest.outputStream().use { input.copyTo(it) }
-                }
-                val (added, total) = CaptureRepository.loadCaptureFileAdditive(dest)
-                stopCount = total.coerceAtLeast(0)
-                status = when {
-                    added < 0 -> "Could not read capture"
-                    added == 0 && total == 0 -> "No shipments in capture"
-                    added == 0 -> "No new stops (already loaded, $total total)"
-                    else -> "Added $added stops ($total total)"
-                }
-            } catch (e: Exception) {
-                status = "Load failed: ${e.message}"
+            }
+            stopCount = total.coerceAtLeast(0)
+            status = when {
+                failed == uris.size -> "Could not read capture"
+                addedTotal == 0 && total == 0 -> "No shipments in capture"
+                addedTotal == 0 -> "No new stops (already loaded, $total total)"
+                failed > 0 -> "Added $addedTotal stops ($total total), $failed failed"
+                else -> "Added $addedTotal stops from ${uris.size} files ($total total)"
             }
         }
     }
@@ -360,7 +369,7 @@ fun MainScreen() {
             onClick = { capturePicker.launch(arrayOf("*/*")) },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Load capture file (adds)")
+            Text("Load Capture(s)")
         }
 
         Button(
@@ -368,7 +377,7 @@ fun MainScreen() {
             enabled = !geocoding,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Generate Excel from Capture")
+            Text("Generate manifest")
         }
 
         if (lastFile != null) {
