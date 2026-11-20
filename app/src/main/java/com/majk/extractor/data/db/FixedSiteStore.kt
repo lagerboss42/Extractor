@@ -1,6 +1,9 @@
 package com.majk.extractor.data.db
 
 import android.content.Context
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.majk.extractor.data.model.Shipment
 import com.majk.extractor.data.model.ShipmentType
 import org.json.JSONArray
@@ -109,7 +112,7 @@ data class FixedSiteRule(
 object FixedSiteStore {
 
     @Volatile
-    var revision: Int = 0
+    var revision by mutableStateOf(0)
         private set
 
     private var file: java.io.File? = null
@@ -145,7 +148,7 @@ object FixedSiteStore {
         saveAll(all().filter { it.id != id })
     }
 
-    fun move(id: String, up: Boolean) {
+    fun move(id: String, up: Boolean, persist: Boolean = true) {
         val current = all().toMutableList()
         val idx = current.indexOfFirst { it.id == id }
         if (idx < 0) return
@@ -153,7 +156,17 @@ object FixedSiteStore {
         if (swap !in current.indices) return
         val item = current.removeAt(idx)
         current.add(swap, item)
-        saveAll(current)
+        if (persist) saveAll(current) else stage(current)
+    }
+
+    /** Memory only. Disk write waits until the drag ends. */
+    private fun stage(list: List<FixedSiteRule>) {
+        cached = list.mapIndexed { i, s -> s.copy(order = i) }
+        revision++
+    }
+
+    fun persist() {
+        write(cached.orEmpty())
     }
 
     fun match(s: Shipment): FixedSiteRule? = all().firstOrNull { it.matches(s) }

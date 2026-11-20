@@ -1,8 +1,7 @@
 package com.majk.extractor.ui
 
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -14,31 +13,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.majk.extractor.data.db.FixedSiteRule
 import com.majk.extractor.data.db.FixedSiteStore
 import java.util.UUID
-import kotlinx.coroutines.withTimeoutOrNull
 
 private val DisabledGrey = Color(0xFF9E9E9E)
 
 @Composable
 fun FixedSitesPane() {
-    val revision = FixedSiteStore.revision
-    var sites by remember { mutableStateOf(FixedSiteStore.all()) }
+    val sites = remember(FixedSiteStore.revision) { FixedSiteStore.all() }
     var editing by remember { mutableStateOf<FixedSiteRule?>(null) }
     var adding by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(revision) {
-        sites = FixedSiteStore.all()
-    }
-
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            "${sites.size} sites · tap to edit · hold and drag to reorder",
+            "${sites.size} sites · tap to edit · hold ⋮⋮ and drag",
             style = MaterialTheme.typography.bodySmall
         )
         Button(onClick = { adding = true }, modifier = Modifier.fillMaxWidth()) {
@@ -50,38 +42,9 @@ fun FixedSitesPane() {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .pointerInput(site.id) {
-                            val timeout = viewConfiguration.longPressTimeoutMillis
-                            val threshold = 64.dp.toPx()
-                            awaitEachGesture {
-                                awaitFirstDown()
-                                val up = withTimeoutOrNull(timeout) { waitForUpOrCancellation() }
-                                if (up != null) {
-                                    editing = FixedSiteStore.all().firstOrNull { it.id == site.id } ?: site
-                                    return@awaitEachGesture
-                                }
-                                dragging = site.id
-                                var accum = 0f
-                                try {
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.firstOrNull() ?: break
-                                        if (!change.pressed) break
-                                        accum += change.positionChange().y
-                                        change.consume()
-                                        while (accum > threshold) {
-                                            FixedSiteStore.move(site.id, false)
-                                            accum -= threshold
-                                        }
-                                        while (accum < -threshold) {
-                                            FixedSiteStore.move(site.id, true)
-                                            accum += threshold
-                                        }
-                                    }
-                                } finally {
-                                    dragging = null
-                                }
-                            }
+                        .animateItem()
+                        .clickable {
+                            editing = FixedSiteStore.all().firstOrNull { it.id == site.id } ?: site
                         }
                 ) {
                     Row(
@@ -115,7 +78,39 @@ fun FixedSitesPane() {
                         }
                         Text(
                             "⋮⋮",
-                            color = if (dragging == site.id) MaterialTheme.colorScheme.primary else DisabledGrey
+                            color = if (dragging == site.id) MaterialTheme.colorScheme.primary else DisabledGrey,
+                            modifier = Modifier
+                                .padding(start = 12.dp)
+                                .pointerInput(site.id) {
+                                    var accum = 0f
+                                    val threshold = 56.dp.toPx()
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            dragging = site.id
+                                            accum = 0f
+                                        },
+                                        onDragEnd = {
+                                            dragging = null
+                                            FixedSiteStore.persist()
+                                        },
+                                        onDragCancel = {
+                                            dragging = null
+                                            FixedSiteStore.persist()
+                                        },
+                                        onDrag = { change, drag ->
+                                            change.consume()
+                                            accum += drag.y
+                                            while (accum > threshold) {
+                                                FixedSiteStore.move(site.id, up = false, persist = false)
+                                                accum -= threshold
+                                            }
+                                            while (accum < -threshold) {
+                                                FixedSiteStore.move(site.id, up = true, persist = false)
+                                                accum += threshold
+                                            }
+                                        }
+                                    )
+                                }
                         )
                     }
                 }

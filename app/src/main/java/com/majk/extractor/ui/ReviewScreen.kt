@@ -7,7 +7,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.majk.extractor.data.db.FixedSiteStore
 import com.majk.extractor.data.model.Shipment
@@ -69,6 +71,10 @@ fun ReviewScreen(
             onSave = { updated, siteName ->
                 onChange(applyEdit(stops, idx, updated, siteName))
                 editing = null
+            },
+            onRemove = {
+                onChange(stops.filterIndexed { i, _ -> i != idx })
+                editing = null
             }
         )
     }
@@ -117,7 +123,8 @@ private fun applyEdit(
 private fun EditStopDialog(
     stop: Shipment,
     onDismiss: () -> Unit,
-    onSave: (Shipment, String?) -> Unit
+    onSave: (Shipment, String?) -> Unit,
+    onRemove: () -> Unit
 ) {
     var recipient by remember { mutableStateOf(stop.recipient) }
     var address by remember { mutableStateOf(stop.address) }
@@ -129,6 +136,7 @@ private fun EditStopDialog(
     var type by remember { mutableStateOf(stop.type) }
     var site by remember { mutableStateOf(stop.fixedSiteName ?: "None") }
     var siteOpen by remember { mutableStateOf(false) }
+    var confirmRemove by remember { mutableStateOf(false) }
     val sites = listOf("None") + FixedSiteStore.all().map { it.name }.distinct()
     val colliInt = colli.toIntOrNull()
     val weightInt = weight.toIntOrNull()
@@ -175,6 +183,12 @@ private fun EditStopDialog(
                         }
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    TextButton(onClick = { confirmRemove = true }) {
+                        Text("Remove", color = Color(0xFFC62828))
+                    }
+                }
             }
         },
         confirmButton = {
@@ -199,4 +213,25 @@ private fun EditStopDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+    if (confirmRemove) {
+        AlertDialog(
+            onDismissRequest = { confirmRemove = false },
+            title = { Text("Remove this stop?") },
+            text = {
+                Text(
+                    listOf(stop.address, stop.zip, stop.city).filter { it.isNotBlank() }.joinToString(", ")
+                        .ifBlank { stop.recipient.ifBlank { "This stop" } }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRemove = false
+                    onRemove()
+                }) { Text("Remove", color = Color(0xFFC62828)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmRemove = false }) { Text("Cancel") }
+            }
+        )
+    }
 }
