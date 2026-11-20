@@ -1,19 +1,36 @@
 package com.majk.extractor.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.majk.extractor.data.db.FixedSiteRule
 import com.majk.extractor.data.db.FixedSiteStore
 import java.util.UUID
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
+
+private val RemoveRed = Color(0xFFC62828)
+private val RemoveFill = Color(0xFFB71C1C)
+private val DisabledGrey = Color(0xFF9E9E9E)
 
 @Composable
 fun FixedSitesPane() {
@@ -21,6 +38,7 @@ fun FixedSitesPane() {
     var sites by remember { mutableStateOf(FixedSiteStore.all()) }
     var editing by remember { mutableStateOf<FixedSiteRule?>(null) }
     var adding by remember { mutableStateOf(false) }
+    var dragging by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(revision) {
         sites = FixedSiteStore.all()
@@ -28,7 +46,7 @@ fun FixedSitesPane() {
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
-            "${sites.size} sites · first match wins · comma-separated keywords",
+            "${sites.size} sites · tap to edit · hold and drag to reorder",
             style = MaterialTheme.typography.bodySmall
         )
         Button(onClick = { adding = true }, modifier = Modifier.fillMaxWidth()) {
@@ -36,25 +54,77 @@ fun FixedSitesPane() {
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(sites, key = { it.id }) { site ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(site.name, style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            listOf(site.zip, site.city).filter { it.isNotBlank() }.joinToString(" ")
-                                .ifBlank { site.address },
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        if (site.recipientKeywords.isNotBlank()) {
-                            Text(site.recipientKeywords, style = MaterialTheme.typography.bodySmall)
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { FixedSiteStore.move(site.id, true) }) { Text("Up") }
-                            TextButton(onClick = { FixedSiteStore.move(site.id, false) }) { Text("Down") }
-                            TextButton(onClick = { editing = site }) { Text("Modify") }
-                            TextButton(onClick = { FixedSiteStore.delete(site.id) }) {
-                                Text("Remove", color = Color(0xFFFF6B6B))
+                val muted = !site.enabled
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .pointerInput(site.id) {
+                            val timeout = viewConfiguration.longPressTimeoutMillis
+                            val threshold = 64.dp.toPx()
+                            awaitEachGesture {
+                                awaitFirstDown()
+                                val up = withTimeoutOrNull(timeout) { waitForUpOrCancellation() }
+                                if (up != null) {
+                                    editing = site
+                                    return@awaitEachGesture
+                                }
+                                dragging = site.id
+                                var accum = 0f
+                                try {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull() ?: break
+                                        if (!change.pressed) break
+                                        accum += change.positionChange().y
+                                        change.consume()
+                                        while (accum > threshold) {
+                                            FixedSiteStore.move(site.id, false)
+                                            accum -= threshold
+                                        }
+                                        while (accum < -threshold) {
+                                            FixedSiteStore.move(site.id, true)
+                                            accum += threshold
+                                        }
+                                    }
+                                } finally {
+                                    dragging = null
+                                }
                             }
                         }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    site.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = if (muted) DisabledGrey else Color.Unspecified,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (muted) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        "Disabled",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = DisabledGrey
+                                    )
+                                }
+                            }
+                            Text(
+                                listOf(site.zip, site.city).filter { it.isNotBlank() }.joinToString(" ")
+                                    .ifBlank { site.address },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (muted) DisabledGrey else Color.Unspecified
+                            )
+                        }
+                        Text(
+                            "⋮⋮",
+                            color = if (dragging == site.id) MaterialTheme.colorScheme.primary else DisabledGrey
+                        )
                     }
                 }
             }
@@ -72,6 +142,11 @@ fun FixedSitesPane() {
                 FixedSiteStore.upsert(rule)
                 adding = false
                 editing = null
+            },
+            onDelete = {
+                editing?.let { FixedSiteStore.delete(it.id) }
+                adding = false
+                editing = null
             }
         )
     }
@@ -82,7 +157,8 @@ fun FixedSitesPane() {
 private fun FixedSiteDialog(
     existing: FixedSiteRule?,
     onDismiss: () -> Unit,
-    onSave: (FixedSiteRule) -> Unit
+    onSave: (FixedSiteRule) -> Unit,
+    onDelete: () -> Unit
 ) {
     var name by remember { mutableStateOf(existing?.name.orEmpty()) }
     var address by remember { mutableStateOf(existing?.address.orEmpty()) }
@@ -94,11 +170,27 @@ private fun FixedSiteDialog(
     var either by remember { mutableStateOf(existing?.matchEither ?: false) }
     var split by remember { mutableStateOf(existing?.splitByType ?: true) }
     var typeFilter by remember { mutableStateOf(existing?.typeFilter ?: "any") }
+    var enabled by remember { mutableStateOf(existing?.enabled ?: true) }
     val canSave = name.isNotBlank() && (recipient.isNotBlank() || addressKeys.isNotBlank())
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (existing == null) "Add fixed site" else "Modify fixed site") },
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    if (existing == null) "Add fixed site" else "Modify ${existing.name}",
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text("Enabled", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.width(4.dp))
+                Switch(checked = enabled, onCheckedChange = { enabled = it })
+            }
+        },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -130,6 +222,10 @@ private fun FixedSiteDialog(
                         )
                     }
                 }
+                if (existing != null) {
+                    Spacer(Modifier.height(8.dp))
+                    HoldToRemove(onRemove = onDelete)
+                }
             }
         },
         confirmButton = {
@@ -150,7 +246,8 @@ private fun FixedSiteDialog(
                             matchEither = either,
                             splitByType = split,
                             typeFilter = typeFilter,
-                            order = existing?.order ?: 0
+                            order = existing?.order ?: 0,
+                            enabled = enabled
                         )
                     )
                 },
@@ -161,4 +258,58 @@ private fun FixedSiteDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+/** Fills darker red over 2 seconds. Release early and it resets. */
+@Composable
+private fun HoldToRemove(onRemove: () -> Unit) {
+    var holding by remember { mutableStateOf(false) }
+    var progress by remember { mutableFloatStateOf(0f) }
+    val shape = RoundedCornerShape(8.dp)
+
+    LaunchedEffect(holding) {
+        if (!holding) {
+            progress = 0f
+            return@LaunchedEffect
+        }
+        val start = System.currentTimeMillis()
+        while (holding) {
+            progress = ((System.currentTimeMillis() - start) / 2000f).coerceIn(0f, 1f)
+            if (progress >= 1f) {
+                onRemove()
+                holding = false
+                break
+            }
+            delay(16)
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.5f)
+                .height(44.dp)
+                .clip(shape)
+                .border(1.dp, RemoveRed, shape)
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onPress = {
+                            holding = true
+                            tryAwaitRelease()
+                            holding = false
+                        }
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(progress)
+                    .align(Alignment.CenterStart)
+                    .background(RemoveFill)
+            )
+            Text("Remove", color = if (progress > 0.45f) Color.White else RemoveRed)
+        }
+    }
 }

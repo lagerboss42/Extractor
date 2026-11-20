@@ -27,9 +27,12 @@ data class FixedSiteRule(
     val splitByType: Boolean,
     /** any, pick, or del. */
     val typeFilter: String,
-    val order: Int
+    val order: Int,
+    /** Off keeps the row in place but skips matching. */
+    val enabled: Boolean = true
 ) {
     fun matches(s: Shipment): Boolean {
+        if (!enabled) return false
         if (typeFilter == "pick" && s.type != ShipmentType.PICK) return false
         if (typeFilter == "del" && s.type == ShipmentType.PICK) return false
         if (zip.isNotBlank() && s.zip.isNotBlank() && digits(s.zip) != digits(zip)) return false
@@ -192,6 +195,7 @@ object FixedSiteStore {
                 put("splitByType", s.splitByType)
                 put("typeFilter", s.typeFilter)
                 put("order", s.order)
+                put("enabled", s.enabled)
             })
         }
         f.parentFile?.mkdirs()
@@ -218,7 +222,8 @@ object FixedSiteStore {
                     matchEither = o.optBoolean("matchEither", false),
                     splitByType = o.optBoolean("splitByType", true),
                     typeFilter = o.optString("typeFilter", "any"),
-                    order = o.optInt("order", i)
+                    order = o.optInt("order", i),
+                    enabled = o.optBoolean("enabled", true)
                 )
             )
         }

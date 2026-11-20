@@ -802,8 +802,8 @@ private fun ModifyGeoDialog(
                     if (lastEdited == "plus") {
                         val decoded = PlusCode.decode(plusCode, currentLat(), currentLon(), city)
                         if (decoded != null) {
-                            latText = decoded.first.toString()
-                            lonText = decoded.second.toString()
+                            latText = format7(decoded.first)
+                            lonText = format7(decoded.second)
                         }
                     }
                 }
@@ -840,3 +840,5 @@ private fun ModifyGeoDialog(
         }
     )
 }
+
+private fun format7(v: Double): String = String.format(java.util.Locale.US, "%.7f", v)

@@ -176,9 +176,15 @@ object PlusCode {
         lat += row * fineLat + fineLat / 2.0
         lon += col * fineLon + fineLon / 2.0
 
-        val latitude = lat - 90.0
-        val longitude = lon - 180.0
+        val latitude = round7(lat - 90.0)
+        val longitude = round7(lon - 180.0)
         if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return null
         return latitude to longitude
+    }
+
+    /** 7 decimals is ~1 cm. A Plus Code cell is coarser, so this loses nothing. */
+    private fun round7(v: Double): Double {
+        val scale = 10_000_000.0
+        return kotlin.math.round(v * scale) / scale
     }
 }
