@@ -11,8 +11,8 @@ android {
         applicationId = "com.majk.exbeta"
         minSdk = 26
         targetSdk = 35
-        versionCode = 47
-        versionName = "0.5.17b"
+        versionCode = 48
+        versionName = "0.5.18b"
     }
 
     buildFeatures {
